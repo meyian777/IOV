@@ -26,6 +26,10 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>LabVoice uses the microphone to receive developer commands by voice.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>LabVoice converts spoken developer commands into text so they can be understood and executed safely.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
