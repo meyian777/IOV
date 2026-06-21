@@ -1,6 +1,6 @@
 class LanguageProfile {
   final String name;
-  final String recognitionLocale;
+  final String? recognitionLocale;
   final String voiceLocale;
   final String languageTag;
 
@@ -14,6 +14,12 @@ class LanguageProfile {
 
 class LanguageManager {
   static const Map<String, LanguageProfile> profiles = {
+    "auto": LanguageProfile(
+      name: "Automático",
+      recognitionLocale: null,
+      voiceLocale: "en-US",
+      languageTag: "auto",
+    ),
     "es_ES": LanguageProfile(
       name: "Español",
       recognitionLocale: "es_ES",
@@ -76,17 +82,71 @@ class LanguageManager {
     ),
   };
 
-  static LanguageProfile _current = profiles["es_ES"]!;
+  static LanguageProfile _current = profiles["auto"]!;
+  static String _effectiveLanguage = "es";
 
   static LanguageProfile get current => _current;
+  static String get effectiveLanguage => _current.languageTag == "auto"
+      ? _effectiveLanguage
+      : _current.languageTag;
+  static String get activeVoiceLocale =>
+      profileForLanguage(effectiveLanguage).voiceLocale;
 
   static void setLanguage(String recognitionLocale) {
-    _current = profiles[recognitionLocale] ?? profiles["en_US"]!;
+    _current = profiles[recognitionLocale] ?? profiles["auto"]!;
+    if (_current.languageTag != "auto") {
+      _effectiveLanguage = _current.languageTag;
+    }
   }
 
-  static bool get isSpanish => _current.languageTag == "es";
+  static String detectLanguage(String text) {
+    final normalized = text.toLowerCase();
 
-  static String languageUpdated() => isSpanish
+    if (RegExp(r'[\u3040-\u30ff]').hasMatch(text)) return "ja";
+    if (RegExp(r'[\uac00-\ud7af]').hasMatch(text)) return "ko";
+    if (RegExp(r'[\u4e00-\u9fff]').hasMatch(text)) return "zh";
+    if (RegExp(r'[\u0400-\u04ff]').hasMatch(text)) return "ru";
+
+    const markers = {
+      "es": [" el ", " la ", " que ", " por ", " para ", "hola", "proyecto"],
+      "en": [" the ", " and ", " what ", " for ", "hello", "project", "open "],
+      "pt": [" você ", " para ", " projeto", "olá", " abrir "],
+      "fr": [" le ", " la ", " pour ", "bonjour", " projet"],
+      "de": [" der ", " die ", " und ", "hallo", " projekt"],
+      "it": [" il ", " la ", " per ", "ciao", " progetto"],
+    };
+
+    final padded = " $normalized ";
+    var bestLanguage = _effectiveLanguage;
+    var bestScore = 0;
+    for (final entry in markers.entries) {
+      final score = entry.value.where(padded.contains).length;
+      if (score > bestScore) {
+        bestScore = score;
+        bestLanguage = entry.key;
+      }
+    }
+    return bestLanguage;
+  }
+
+  static String alignToText(String text) {
+    if (_current.languageTag == "auto") {
+      _effectiveLanguage = detectLanguage(text);
+    }
+    return effectiveLanguage;
+  }
+
+  static LanguageProfile profileForLanguage(String languageTag) =>
+      profiles.values.firstWhere(
+        (profile) => profile.languageTag == languageTag,
+        orElse: () => profiles["en_US"]!,
+      );
+
+  static bool get isSpanish => effectiveLanguage == "es";
+
+  static String languageUpdated() => _current.languageTag == "auto"
+      ? "Modo automático activado. Responderé en el idioma que detecte."
+      : isSpanish
       ? "Idioma actualizado a ${_current.name}. Estoy listo."
       : "Language updated to ${_current.name}. I'm ready.";
 

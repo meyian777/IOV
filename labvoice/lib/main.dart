@@ -45,8 +45,8 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
 
   bool _isListening = false;
 
-  String _selectedLanguageCode = "es_ES";
-  String _selectedLanguageName = "Español";
+  String _selectedLanguageCode = "auto";
+  String _selectedLanguageName = "Automático";
 
   String _heardCommand = "Todavía no he recibido ningún comando.";
   String _labVoiceResponse = "Ian, ¿qué vamos a construir hoy?";
@@ -67,7 +67,7 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
     _speech = stt.SpeechToText();
 
     _initializeSpeech();
-    VoiceEngine.setLanguage(LanguageManager.current.voiceLocale);
+    VoiceEngine.setLanguage(LanguageManager.activeVoiceLocale);
 
     _loadProjectMemory();
   }
@@ -107,6 +107,11 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
   }
 
   Future<void> _processCommand(String rawCommand) async {
+    if (LanguageManager.current.languageTag == "auto") {
+      LanguageManager.alignToText(rawCommand);
+      await VoiceEngine.setLanguage(LanguageManager.activeVoiceLocale);
+    }
+
     final command = rawCommand.toLowerCase().trim();
     final intent = IntentEngine.detectIntent(command);
 
@@ -413,7 +418,7 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
     try {
       final result = await LabVoiceApi.chat(
         message,
-        language: LanguageManager.current.languageTag,
+        language: LanguageManager.effectiveLanguage,
       );
       await _updateState(
         heard: rawCommand,
@@ -635,7 +640,7 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
 
     _speech.listen(
       listenOptions: stt.SpeechListenOptions(
-        localeId: _selectedLanguageCode,
+        localeId: LanguageManager.current.recognitionLocale,
         listenFor: const Duration(minutes: 10),
         pauseFor: const Duration(seconds: 2),
       ),
@@ -694,10 +699,10 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
         if (value == null) return;
 
         LanguageManager.setLanguage(value);
-        await VoiceEngine.setLanguage(LanguageManager.current.voiceLocale);
+        await VoiceEngine.setLanguage(LanguageManager.activeVoiceLocale);
 
         setState(() {
-          _selectedLanguageCode = LanguageManager.current.recognitionLocale;
+          _selectedLanguageCode = value;
           _selectedLanguageName = LanguageManager.current.name;
           _labVoiceResponse = LanguageManager.languageUpdated();
         });
