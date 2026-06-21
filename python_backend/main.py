@@ -1,6 +1,6 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from openai import OpenAI
 from dotenv import load_dotenv
@@ -34,15 +34,15 @@ app.add_middleware(
 
 
 class ActionRequest(BaseModel):
-    action: str
+    action: str = Field(min_length=1, max_length=100)
 
 
 class ConfirmationRequest(BaseModel):
-    confirmation_token: str
+    confirmation_token: str = Field(min_length=1, max_length=200)
 
 
 class ChatRequest(BaseModel):
-    message: str
+    message: str = Field(min_length=1, max_length=10000)
 
 
 class SessionUpdate(BaseModel):
@@ -66,6 +66,27 @@ session_store = SessionStore(SESSION_DATABASE_PATH)
 permission_engine = PermissionEngine()
 
 
+def api_error(status_code: int, code: str, message: str):
+    raise HTTPException(
+        status_code=status_code,
+        detail={
+            "code": code,
+            "message": message,
+        },
+    )
+
+
+def action_result(result: dict):
+    if result.get("success"):
+        return result
+
+    api_error(
+        422,
+        result.get("error", "action_failed"),
+        result.get("message", "The action could not be completed."),
+    )
+
+
 @app.get("/")
 def root():
     return {
@@ -77,47 +98,74 @@ def root():
 @app.post("/execute")
 def execute_action(request: ActionRequest):
     prepared = permission_engine.prepare(request.action)
+    if not prepared.get("success"):
+        api_error(
+            404,
+            prepared.get("error", "unknown_action"),
+            prepared.get("message", "Unknown action."),
+        )
     if not prepared.get("approved"):
         return prepared
 
-    return ActionEngine.execute(request.action, PROJECT_PATH)
+    return action_result(ActionEngine.execute(request.action, PROJECT_PATH))
 
 
 @app.post("/execute/confirm")
 def confirm_action(request: ConfirmationRequest):
     confirmed = permission_engine.confirm(request.confirmation_token)
     if not confirmed.get("approved"):
-        return confirmed
+        status_code = (
+            410
+            if confirmed.get("error") == "expired_confirmation"
+            else 409
+        )
+        api_error(
+            status_code,
+            confirmed.get("error", "confirmation_failed"),
+            confirmed.get("message", "The action could not be confirmed."),
+        )
 
-    return ActionEngine.execute(confirmed["action"], PROJECT_PATH)
+    return action_result(
+        ActionEngine.execute(confirmed["action"], PROJECT_PATH)
+    )
 
 
 @app.post("/execute/cancel")
 def cancel_action(request: ConfirmationRequest):
-    return permission_engine.cancel(request.confirmation_token)
+    result = permission_engine.cancel(request.confirmation_token)
+    if not result["success"]:
+        api_error(404, "pending_action_not_found", result["message"])
+    return result
 
 
 @app.get("/project/inspect")
 def inspect_project():
     result = ProjectInspector.inspect(PROJECT_PATH)
 
-    if result["success"]:
-        project = result["project"]
-        session_store.update(
-            {
-                "current_task": "Inspect active project",
-                "last_action": result["message"],
-                "next_action": "Run project analysis and tests",
-                "active_project": project["name"],
-            }
-        )
+    if not result["success"]:
+        api_error(404, "project_not_found", result["message"])
 
+    project = result["project"]
+    session_store.update(
+        {
+            "current_task": "Inspect active project",
+            "last_action": result["message"],
+            "next_action": "Run project analysis and tests",
+            "active_project": project["name"],
+        }
+    )
     return result
 
 
 @app.post("/project/diagnostics")
 def run_project_diagnostics():
     result = DiagnosticsRunner.run(PROJECT_PATH)
+    if not result.get("checks"):
+        api_error(
+            422,
+            "diagnostics_unavailable",
+            result["message"],
+        )
     summary = result.get("summary", {})
 
     session_store.update(
@@ -179,22 +227,28 @@ Keep responses concise, practical, and action-oriented.
 
 @app.post("/chat")
 def chat(request: ChatRequest):
-
-    response = client.responses.create(
-        model="gpt-5",
-       input=[
-    {
-        "role": "system",
-        "content": SYSTEM_PROMPT
-    },
-    {
-        "role": "user",
-        "content": request.message
-    }
-]
-    )
+    try:
+        response = client.responses.create(
+            model="gpt-5",
+            input=[
+                {
+                    "role": "system",
+                    "content": SYSTEM_PROMPT,
+                },
+                {
+                    "role": "user",
+                    "content": request.message,
+                },
+            ],
+        )
+    except Exception:
+        api_error(
+            502,
+            "ai_service_unavailable",
+            "The AI service is temporarily unavailable.",
+        )
 
     return {
         "success": True,
-        "response": response.output_text
+        "response": response.output_text,
     }

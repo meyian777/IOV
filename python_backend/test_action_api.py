@@ -45,3 +45,38 @@ class ActionApiTest(unittest.TestCase):
 
         self.assertTrue(result["success"])
         execute.assert_called_once()
+
+    def test_unknown_action_returns_not_found(self):
+        response = TestClient(app).post(
+            "/execute",
+            json={"action": "UNKNOWN_ACTION"},
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["detail"]["code"], "unknown_action")
+
+    def test_used_confirmation_returns_conflict(self):
+        client = TestClient(app)
+        prepared = client.post(
+            "/execute",
+            json={"action": "OPEN_TERMINAL"},
+        ).json()
+        token = prepared["confirmation_token"]
+
+        with patch("main.ActionEngine.execute") as execute:
+            execute.return_value = {"success": True, "message": "Executed"}
+            client.post(
+                "/execute/confirm",
+                json={"confirmation_token": token},
+            )
+
+        reused = client.post(
+            "/execute/confirm",
+            json={"confirmation_token": token},
+        )
+
+        self.assertEqual(reused.status_code, 409)
+        self.assertEqual(
+            reused.json()["detail"]["code"],
+            "invalid_confirmation",
+        )

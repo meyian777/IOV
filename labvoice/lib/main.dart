@@ -123,16 +123,7 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
     }
 
     if (command.startsWith("chat ")) {
-      final result = await LabVoiceApi.chat(command.replaceFirst("chat ", ""));
-
-      _updateState(
-        heard: rawCommand,
-        response: result["response"],
-        intent: "chat",
-        action: "AI conversation",
-        security: "Secure",
-      );
-
+      await _runChat(rawCommand, command.replaceFirst("chat ", ""));
       return;
     }
 
@@ -397,15 +388,28 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
       return;
     }
 
-    final result = await LabVoiceApi.chat(rawCommand);
+    await _runChat(rawCommand, rawCommand);
+  }
 
-    _updateState(
-      heard: rawCommand,
-      response: result["response"],
-      intent: "chat",
-      action: "GPT fallback",
-      security: "Secure",
-    );
+  Future<void> _runChat(String rawCommand, String message) async {
+    try {
+      final result = await LabVoiceApi.chat(message);
+      await _updateState(
+        heard: rawCommand,
+        response: result["response"] ?? "I could not produce a response.",
+        intent: "chat",
+        action: "AI conversation",
+        security: "Secure",
+      );
+    } on LabVoiceApiException catch (e) {
+      await _updateState(
+        heard: rawCommand,
+        response: e.message,
+        intent: "backend_error",
+        action: e.code ?? "chat_failed",
+        security: "Blocked",
+      );
+    }
   }
 
   Future<void> _requestAction({
@@ -462,19 +466,29 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
       return;
     }
 
-    final result = await ActionExecutor.confirm(token);
-    _pendingConfirmationToken = null;
-    _pendingActionName = null;
+    try {
+      final result = await ActionExecutor.confirm(token);
+      _pendingConfirmationToken = null;
+      _pendingActionName = null;
 
-    await _updateState(
-      heard: rawCommand,
-      response: result["message"] ?? "$actionName completed.",
-      intent: "confirm_action",
-      action: result["success"] == true
-          ? "$actionName confirmed and executed."
-          : "$actionName was blocked.",
-      security: result["success"] == true ? "Confirmed" : "Blocked",
-    );
+      await _updateState(
+        heard: rawCommand,
+        response: result["message"] ?? "$actionName completed.",
+        intent: "confirm_action",
+        action: "$actionName confirmed and executed.",
+        security: "Confirmed",
+      );
+    } on LabVoiceApiException catch (e) {
+      _pendingConfirmationToken = null;
+      _pendingActionName = null;
+      await _updateState(
+        heard: rawCommand,
+        response: e.message,
+        intent: "confirm_action",
+        action: e.code ?? "confirmation_failed",
+        security: "Blocked",
+      );
+    }
   }
 
   Future<void> _cancelPendingAction(String rawCommand) async {
@@ -490,17 +504,29 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
       return;
     }
 
-    final result = await ActionExecutor.cancel(token);
-    _pendingConfirmationToken = null;
-    _pendingActionName = null;
+    try {
+      final result = await ActionExecutor.cancel(token);
+      _pendingConfirmationToken = null;
+      _pendingActionName = null;
 
-    await _updateState(
-      heard: rawCommand,
-      response: result["message"] ?? "Pending action canceled.",
-      intent: "cancel_action",
-      action: "Pending action canceled.",
-      security: "Secure",
-    );
+      await _updateState(
+        heard: rawCommand,
+        response: result["message"] ?? "Pending action canceled.",
+        intent: "cancel_action",
+        action: "Pending action canceled.",
+        security: "Secure",
+      );
+    } on LabVoiceApiException catch (e) {
+      _pendingConfirmationToken = null;
+      _pendingActionName = null;
+      await _updateState(
+        heard: rawCommand,
+        response: e.message,
+        intent: "cancel_action",
+        action: e.code ?? "cancel_failed",
+        security: "Blocked",
+      );
+    }
   }
 
   bool _containsAny(String text, List<String> patterns) {
