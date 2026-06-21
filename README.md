@@ -61,6 +61,9 @@ For the first microphone and speech-recognition permission request, running the
 macOS target directly from Xcode may be necessary because of a known Flutter
 development limitation.
 
+The launcher builds in `/private/tmp/LabVoiceBuild` to prevent Finder metadata
+from cloud or desktop file providers from invalidating the local code signature.
+
 ## Security
 
 - Never commit `.env` files or API keys.
