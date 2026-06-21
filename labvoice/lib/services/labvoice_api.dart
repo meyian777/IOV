@@ -41,11 +41,37 @@ class LabVoiceApi {
   }
 
   static Future<Map<String, dynamic>> executeAction(String action) async {
-    final response = await http.post(
-      Uri.parse("$baseUrl/execute"),
-      headers: {"Content-Type": "application/json"},
-      body: jsonEncode({"action": action}),
-    );
+    final response = await http
+        .post(
+          Uri.parse("$baseUrl/execute"),
+          headers: {"Content-Type": "application/json"},
+          body: jsonEncode({"action": action}),
+        )
+        .timeout(const Duration(seconds: 10));
+
+    return jsonDecode(response.body);
+  }
+
+  static Future<Map<String, dynamic>> confirmAction(String token) async {
+    final response = await http
+        .post(
+          Uri.parse("$baseUrl/execute/confirm"),
+          headers: {"Content-Type": "application/json"},
+          body: jsonEncode({"confirmation_token": token}),
+        )
+        .timeout(const Duration(seconds: 30));
+
+    return jsonDecode(response.body);
+  }
+
+  static Future<Map<String, dynamic>> cancelAction(String token) async {
+    final response = await http
+        .post(
+          Uri.parse("$baseUrl/execute/cancel"),
+          headers: {"Content-Type": "application/json"},
+          body: jsonEncode({"confirmation_token": token}),
+        )
+        .timeout(const Duration(seconds: 10));
 
     return jsonDecode(response.body);
   }

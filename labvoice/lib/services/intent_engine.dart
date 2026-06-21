@@ -2,6 +2,26 @@ class IntentEngine {
   static String detectIntent(String command) {
     final text = command.toLowerCase().trim();
 
+    if (text == "confirmar" ||
+        text == "confirmo" ||
+        text == "sí" ||
+        text == "si" ||
+        text == "yes" ||
+        text == "sí confirmar" ||
+        text == "si confirmar" ||
+        text == "confirm" ||
+        text == "yes confirm") {
+      return "confirm_action";
+    }
+
+    if (text == "cancelar" ||
+        text == "cancela" ||
+        text == "cancel" ||
+        text == "no" ||
+        text == "no cancelar") {
+      return "cancel_action";
+    }
+
     if (text.contains("ejecuta diagnosticos") ||
         text.contains("ejecuta diagnósticos") ||
         text.contains("ejecuta las pruebas") ||

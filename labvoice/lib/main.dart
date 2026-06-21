@@ -51,6 +51,8 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
   String _detectedIntent = "Waiting for command";
   String _technicalAction = "No pending action";
   String _securityLevel = "Secure";
+  String? _pendingConfirmationToken;
+  String? _pendingActionName;
   final Map<String, String> _languages = {
     "Español": "es_ES",
     "English": "en_US",
@@ -109,6 +111,17 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
   Future<void> _processCommand(String rawCommand) async {
     final command = rawCommand.toLowerCase().trim();
     final intent = IntentEngine.detectIntent(command);
+
+    if (intent == "confirm_action") {
+      await _confirmPendingAction(rawCommand);
+      return;
+    }
+
+    if (intent == "cancel_action") {
+      await _cancelPendingAction(rawCommand);
+      return;
+    }
+
     if (command.startsWith("chat ")) {
       final result = await LabVoiceApi.chat(command.replaceFirst("chat ", ""));
 
@@ -223,48 +236,20 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
       LanguageManager.setLanguage("en");
       await VoiceEngine.setEnglish();
 
-      _updateState(
-        heard: rawCommand,
-        response: LanguageManager.openVSCode(),
+      await _requestAction(
+        rawCommand: rawCommand,
         intent: "open_vscode",
-        action: "Connecting to Python backend.",
-        security: "Secure",
+        actionName: "OPEN_VSCODE",
       );
-
-      try {
-        final result = await ActionExecutor.openVSCode();
-
-        _updateState(
-          heard: rawCommand,
-          response: result["message"] ?? LanguageManager.openVSCodeSuccess(),
-          intent: "open_vscode",
-          action: "OPEN_VSCODE executed.",
-          security: "Secure",
-        );
-      } catch (e) {
-        _updateState(
-          heard: rawCommand,
-          response: LanguageManager.backendError(),
-          intent: "backend_error",
-          action: e.toString(),
-          security: "Secure",
-        );
-      }
-
       return;
     }
 
     if (intent == "open_project") {
-      final result = await ActionExecutor.openProject();
-
-      _updateState(
-        heard: rawCommand,
-        response: result["message"] ?? "Project opened successfully.",
+      await _requestAction(
+        rawCommand: rawCommand,
         intent: "open_project",
-        action: "OPEN_PROJECT executed.",
-        security: "Secure",
+        actionName: "OPEN_PROJECT",
       );
-
       return;
     }
 
@@ -298,60 +283,27 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
     }
 
     if (intent == "run_flutter") {
-      _updateState(
-        heard: rawCommand,
-        response: "Starting Flutter execution, Ian...",
+      await _requestAction(
+        rawCommand: rawCommand,
         intent: "run_flutter",
-        action: "Sending command to Python backend.",
-        security: "Secure",
+        actionName: "RUN_FLUTTER",
       );
-
-      try {
-        final result = await ActionExecutor.runFlutter();
-
-        _updateState(
-          heard: rawCommand,
-          response: result["message"] ?? "Flutter started successfully.",
-          intent: "run_flutter",
-          action: "RUN_FLUTTER executed.",
-          security: "Secure",
-        );
-      } catch (e) {
-        _updateState(
-          heard: rawCommand,
-          response: "I could not execute Flutter from the backend.",
-          intent: "backend_error",
-          action: e.toString(),
-          security: "Secure",
-        );
-      }
-
       return;
     }
     if (intent == "open_terminal") {
-      final result = await ActionExecutor.openTerminal();
-
-      _updateState(
-        heard: rawCommand,
-        response: result["message"] ?? "Terminal opened successfully.",
+      await _requestAction(
+        rawCommand: rawCommand,
         intent: "open_terminal",
-        action: "OPEN_TERMINAL executed.",
-        security: "Secure",
+        actionName: "OPEN_TERMINAL",
       );
-
       return;
     }
     if (intent == "list_files") {
-      final result = await LabVoiceApi.executeAction("LIST_FILES");
-
-      _updateState(
-        heard: rawCommand,
-        response: result["message"] ?? "Files loaded successfully.",
+      await _requestAction(
+        rawCommand: rawCommand,
         intent: "list_files",
-        action: "LIST_FILES executed.",
-        security: "Secure",
+        actionName: "LIST_FILES",
       );
-
       return;
     }
 
@@ -452,6 +404,101 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
       response: result["response"],
       intent: "chat",
       action: "GPT fallback",
+      security: "Secure",
+    );
+  }
+
+  Future<void> _requestAction({
+    required String rawCommand,
+    required String intent,
+    required String actionName,
+  }) async {
+    try {
+      final result = await ActionExecutor.request(actionName);
+
+      if (result["requires_confirmation"] == true) {
+        _pendingConfirmationToken = result["confirmation_token"];
+        _pendingActionName = actionName;
+
+        await _updateState(
+          heard: rawCommand,
+          response: result["message"] ?? "Confirmation required.",
+          intent: intent,
+          action: "$actionName is waiting for confirmation.",
+          security: result["policy"]?["risk"] ?? "Confirmation required",
+        );
+        return;
+      }
+
+      await _updateState(
+        heard: rawCommand,
+        response: result["message"] ?? "$actionName completed.",
+        intent: intent,
+        action: "$actionName executed.",
+        security: result["policy"]?["risk"] ?? "Controlled",
+      );
+    } catch (e) {
+      await _updateState(
+        heard: rawCommand,
+        response: LanguageManager.backendError(),
+        intent: "backend_error",
+        action: e.toString(),
+        security: "Blocked",
+      );
+    }
+  }
+
+  Future<void> _confirmPendingAction(String rawCommand) async {
+    final token = _pendingConfirmationToken;
+    final actionName = _pendingActionName;
+    if (token == null || actionName == null) {
+      await _updateState(
+        heard: rawCommand,
+        response: "There is no pending action to confirm.",
+        intent: "confirm_action",
+        action: "No pending confirmation.",
+        security: "Secure",
+      );
+      return;
+    }
+
+    final result = await ActionExecutor.confirm(token);
+    _pendingConfirmationToken = null;
+    _pendingActionName = null;
+
+    await _updateState(
+      heard: rawCommand,
+      response: result["message"] ?? "$actionName completed.",
+      intent: "confirm_action",
+      action: result["success"] == true
+          ? "$actionName confirmed and executed."
+          : "$actionName was blocked.",
+      security: result["success"] == true ? "Confirmed" : "Blocked",
+    );
+  }
+
+  Future<void> _cancelPendingAction(String rawCommand) async {
+    final token = _pendingConfirmationToken;
+    if (token == null) {
+      await _updateState(
+        heard: rawCommand,
+        response: "There is no pending action to cancel.",
+        intent: "cancel_action",
+        action: "No pending confirmation.",
+        security: "Secure",
+      );
+      return;
+    }
+
+    final result = await ActionExecutor.cancel(token);
+    _pendingConfirmationToken = null;
+    _pendingActionName = null;
+
+    await _updateState(
+      heard: rawCommand,
+      response: result["message"] ?? "Pending action canceled.",
+      intent: "cancel_action",
+      action: "Pending action canceled.",
       security: "Secure",
     );
   }
@@ -623,6 +670,8 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
       "What are we building today?",
       "Inspect Project",
       "Run Diagnostics",
+      "Confirm",
+      "Cancel",
       "Open VS Code",
       "Open LabVoice Project",
       "Run Flutter",

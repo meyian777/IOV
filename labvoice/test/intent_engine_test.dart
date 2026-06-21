@@ -11,4 +11,11 @@ void main() {
     expect(IntentEngine.detectIntent('ejecuta las pruebas'), 'run_diagnostics');
     expect(IntentEngine.detectIntent('run diagnostics'), 'run_diagnostics');
   });
+
+  test('detecta confirmación y cancelación', () {
+    expect(IntentEngine.detectIntent('confirmar'), 'confirm_action');
+    expect(IntentEngine.detectIntent('sí'), 'confirm_action');
+    expect(IntentEngine.detectIntent('cancel'), 'cancel_action');
+    expect(IntentEngine.detectIntent('no'), 'cancel_action');
+  });
 }

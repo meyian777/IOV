@@ -8,6 +8,7 @@ import os
 
 from action_engine import ActionEngine
 from diagnostics_runner import DiagnosticsRunner
+from permission_engine import PermissionEngine
 from project_inspector import ProjectInspector
 from session_store import SessionStore
 
@@ -25,8 +26,8 @@ app = FastAPI(
 # Allow Flutter Web (Chrome) to communicate with FastAPI
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -34,6 +35,10 @@ app.add_middleware(
 
 class ActionRequest(BaseModel):
     action: str
+
+
+class ConfirmationRequest(BaseModel):
+    confirmation_token: str
 
 
 class ChatRequest(BaseModel):
@@ -58,6 +63,7 @@ SESSION_DATABASE_PATH = os.getenv(
     os.path.join(os.path.dirname(__file__), "data", "labvoice.db"),
 )
 session_store = SessionStore(SESSION_DATABASE_PATH)
+permission_engine = PermissionEngine()
 
 
 @app.get("/")
@@ -70,9 +76,25 @@ def root():
 
 @app.post("/execute")
 def execute_action(request: ActionRequest):
-    return ActionEngine.execute(
-        request.action
-    )
+    prepared = permission_engine.prepare(request.action)
+    if not prepared.get("approved"):
+        return prepared
+
+    return ActionEngine.execute(request.action, PROJECT_PATH)
+
+
+@app.post("/execute/confirm")
+def confirm_action(request: ConfirmationRequest):
+    confirmed = permission_engine.confirm(request.confirmation_token)
+    if not confirmed.get("approved"):
+        return confirmed
+
+    return ActionEngine.execute(confirmed["action"], PROJECT_PATH)
+
+
+@app.post("/execute/cancel")
+def cancel_action(request: ConfirmationRequest):
+    return permission_engine.cancel(request.confirmation_token)
 
 
 @app.get("/project/inspect")
