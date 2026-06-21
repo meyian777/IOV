@@ -16,6 +16,11 @@
 .ruff_cache/
 coverage.xml
 .coverage
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
 
 # Flutter / Dart
 **/.dart_tool/

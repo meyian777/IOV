@@ -8,6 +8,7 @@ import os
 
 from action_engine import ActionEngine
 from project_inspector import ProjectInspector
+from session_store import SessionStore
 
 load_dotenv()
 
@@ -38,10 +39,24 @@ class ChatRequest(BaseModel):
     message: str
 
 
+class SessionUpdate(BaseModel):
+    current_goal: str | None = None
+    current_task: str | None = None
+    last_action: str | None = None
+    next_action: str | None = None
+    working_mode: str | None = None
+    active_project: str | None = None
+
+
 PROJECT_PATH = os.getenv(
     "LABVOICE_PROJECT_PATH",
     os.path.join(os.path.dirname(__file__), ".."),
 )
+SESSION_DATABASE_PATH = os.getenv(
+    "LABVOICE_SESSION_DATABASE",
+    os.path.join(os.path.dirname(__file__), "data", "labvoice.db"),
+)
+session_store = SessionStore(SESSION_DATABASE_PATH)
 
 
 @app.get("/")
@@ -61,7 +76,37 @@ def execute_action(request: ActionRequest):
 
 @app.get("/project/inspect")
 def inspect_project():
-    return ProjectInspector.inspect(PROJECT_PATH)
+    result = ProjectInspector.inspect(PROJECT_PATH)
+
+    if result["success"]:
+        project = result["project"]
+        session_store.update(
+            {
+                "current_task": "Inspect active project",
+                "last_action": result["message"],
+                "next_action": "Run project analysis and tests",
+                "active_project": project["name"],
+            }
+        )
+
+    return result
+
+
+@app.get("/session")
+def get_session():
+    return {
+        "success": True,
+        "session": session_store.get(),
+    }
+
+
+@app.put("/session")
+def update_session(request: SessionUpdate):
+    values = request.model_dump(exclude_none=True)
+    return {
+        "success": True,
+        "session": session_store.update(values),
+    }
 
 
 SYSTEM_PROMPT = """

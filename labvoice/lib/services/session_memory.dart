@@ -1,14 +1,19 @@
+import 'dart:convert';
+import 'package:flutter/services.dart';
+
 import '../models/session_state.dart';
+import 'labvoice_api.dart';
 
 class SessionMemory {
   static Future<SessionState> loadSessionState() async {
-    return SessionState(
-      currentGoal: "Build LabVoice OS",
-      currentTask: "Design Session Manager",
-      lastAction: "Implement Project Memory",
-      nextAction: "Create Session Memory",
-      workingMode: "developer",
-      activeProject: "LabVoice",
-    );
+    try {
+      final result = await LabVoiceApi.getSession();
+      return SessionState.fromJson(result["session"]);
+    } catch (_) {
+      final jsonString = await rootBundle.loadString(
+        'assets/data/session_state.json',
+      );
+      return SessionState.fromJson(json.decode(jsonString));
+    }
   }
 }

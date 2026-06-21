@@ -5,6 +5,7 @@ class SessionState {
   final String nextAction;
   final String workingMode;
   final String activeProject;
+  final String updatedAt;
 
   SessionState({
     required this.currentGoal,
@@ -13,6 +14,7 @@ class SessionState {
     required this.nextAction,
     required this.workingMode,
     required this.activeProject,
+    required this.updatedAt,
   });
 
   factory SessionState.fromJson(Map<String, dynamic> json) {
@@ -23,6 +25,7 @@ class SessionState {
       nextAction: json['next_action'] ?? '',
       workingMode: json['working_mode'] ?? '',
       activeProject: json['active_project'] ?? '',
+      updatedAt: json['updated_at'] ?? '',
     );
   }
 }

@@ -9,9 +9,6 @@ import 'services/voice_engine.dart';
 import 'services/language_manager.dart';
 import 'services/labvoice_api.dart';
 
-import 'models/project_state.dart';
-import 'models/session_state.dart';
-
 void main() {
   runApp(const LabVoiceApp());
 }
@@ -54,9 +51,6 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
   String _detectedIntent = "Waiting for command";
   String _technicalAction = "No pending action";
   String _securityLevel = "Secure";
-  ProjectState? _projectState;
-  SessionState? _sessionState;
-
   final Map<String, String> _languages = {
     "Español": "es_ES",
     "English": "en_US",
@@ -93,9 +87,6 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
       final session = await SessionMemory.loadSessionState();
 
       setState(() {
-        _projectState = project;
-        _sessionState = session;
-
         _labVoiceResponse =
             "Good morning ${project.owner}. "
             "Active project: ${project.project}. "
@@ -246,18 +237,30 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
     }
 
     if (intent == "continue_work") {
-      _updateState(
-        heard: rawCommand,
-        response:
-            "Active project: ${_projectState?.project ?? "Unknown"}. "
-            "Current task: ${_sessionState?.currentTask ?? "No task"}. "
-            "Last action: ${_sessionState?.lastAction ?? "No record"}. "
-            "Next action: ${_sessionState?.nextAction ?? "No record"}. "
-            "I am ready to continue.",
-        intent: "continue_work",
-        action: "Recovering project and session state from memory.",
-        security: "Secure",
-      );
+      try {
+        final session = await SessionMemory.loadSessionState();
+
+        await _updateState(
+          heard: rawCommand,
+          response:
+              "Active project: ${session.activeProject}. "
+              "Current task: ${session.currentTask}. "
+              "Last action: ${session.lastAction}. "
+              "Next action: ${session.nextAction}. "
+              "I am ready to continue.",
+          intent: "continue_work",
+          action: "Recovered persistent session from the backend.",
+          security: "Read only",
+        );
+      } catch (e) {
+        await _updateState(
+          heard: rawCommand,
+          response: "I could not recover the saved session.",
+          intent: "backend_error",
+          action: e.toString(),
+          security: "Read only",
+        );
+      }
 
       return;
     }
