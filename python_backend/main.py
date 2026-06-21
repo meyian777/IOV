@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 import os
 
 from action_engine import ActionEngine
+from project_inspector import ProjectInspector
 
 load_dotenv()
 
@@ -37,6 +38,12 @@ class ChatRequest(BaseModel):
     message: str
 
 
+PROJECT_PATH = os.getenv(
+    "LABVOICE_PROJECT_PATH",
+    os.path.join(os.path.dirname(__file__), ".."),
+)
+
+
 @app.get("/")
 def root():
     return {
@@ -50,6 +57,12 @@ def execute_action(request: ActionRequest):
     return ActionEngine.execute(
         request.action
     )
+
+
+@app.get("/project/inspect")
+def inspect_project():
+    return ProjectInspector.inspect(PROJECT_PATH)
+
 
 SYSTEM_PROMPT = """
 You are LabVoice.

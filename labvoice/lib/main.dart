@@ -12,8 +12,6 @@ import 'services/labvoice_api.dart';
 import 'models/project_state.dart';
 import 'models/session_state.dart';
 
-
-
 void main() {
   runApp(const LabVoiceApp());
 }
@@ -49,13 +47,13 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
   bool _isListening = false;
 
   String _selectedLanguageCode = "en_US";
-String _selectedLanguageName = "English";
+  String _selectedLanguageName = "English";
 
- String _heardCommand = "No command received yet.";
-String _labVoiceResponse = "Ian, what are we building today?";
-String _detectedIntent = "Waiting for command";
-String _technicalAction = "No pending action";
-String _securityLevel = "Secure";
+  String _heardCommand = "No command received yet.";
+  String _labVoiceResponse = "Ian, what are we building today?";
+  String _detectedIntent = "Waiting for command";
+  String _technicalAction = "No pending action";
+  String _securityLevel = "Secure";
   ProjectState? _projectState;
   SessionState? _sessionState;
 
@@ -72,52 +70,48 @@ String _securityLevel = "Secure";
     "한국어": "ko_KR",
   };
 
-@override
-void initState() {
-  super.initState();
+  @override
+  void initState() {
+    super.initState();
 
-  _speech = stt.SpeechToText();
+    _speech = stt.SpeechToText();
 
-  _initializeSpeech();
+    _initializeSpeech();
 
-  _loadProjectMemory();
-}
-Future<void> _initializeSpeech() async {
-
-  final available =
-      await _speech.initialize();
-
-  print(
-    "Speech initialized: $available",
-  );
-}
-
-Future<void> _loadProjectMemory() async {
-  try {
-    final project = await ProjectMemory.loadProjectState();
-    final session = await SessionMemory.loadSessionState();
-
-    setState(() {
-      _projectState = project;
-      _sessionState = session;
-
-     _labVoiceResponse =
-    "Good morning ${project.owner}. "
-    "Active project: ${project.project}. "
-    "Current task: ${session.currentTask}. "
-    "Last action: ${session.lastAction}. "
-    "Next action: ${session.nextAction}. "
-    "What are we building today?";
-    });
-  } catch (e) {
-    print("MEMORY ERROR: $e");
-
-    setState(() {
-      _labVoiceResponse =
-          "MEMORY ERROR: $e";
-    });
+    _loadProjectMemory();
   }
-}
+
+  Future<void> _initializeSpeech() async {
+    final available = await _speech.initialize();
+
+    print("Speech initialized: $available");
+  }
+
+  Future<void> _loadProjectMemory() async {
+    try {
+      final project = await ProjectMemory.loadProjectState();
+      final session = await SessionMemory.loadSessionState();
+
+      setState(() {
+        _projectState = project;
+        _sessionState = session;
+
+        _labVoiceResponse =
+            "Good morning ${project.owner}. "
+            "Active project: ${project.project}. "
+            "Current task: ${session.currentTask}. "
+            "Last action: ${session.lastAction}. "
+            "Next action: ${session.nextAction}. "
+            "What are we building today?";
+      });
+    } catch (e) {
+      print("MEMORY ERROR: $e");
+
+      setState(() {
+        _labVoiceResponse = "MEMORY ERROR: $e";
+      });
+    }
+  }
 
   @override
   void dispose() {
@@ -127,303 +121,304 @@ Future<void> _loadProjectMemory() async {
 
   Future<void> _processCommand(String rawCommand) async {
     final command = rawCommand.toLowerCase().trim();
-    final intent =
-    IntentEngine.detectIntent(command);
+    final intent = IntentEngine.detectIntent(command);
     if (command.startsWith("chat ")) {
+      final result = await LabVoiceApi.chat(command.replaceFirst("chat ", ""));
 
-  final result =
-      await LabVoiceApi.chat(
-        command.replaceFirst("chat ", ""),
+      _updateState(
+        heard: rawCommand,
+        response: result["response"],
+        intent: "chat",
+        action: "AI conversation",
+        security: "Secure",
       );
 
-  _updateState(
-    heard: rawCommand,
-    response: result["response"],
-    intent: "chat",
-    action: "AI conversation",
-    security: "Secure",
-  );
+      return;
+    }
 
-  return;
-}
+    if (command.isEmpty) {
+      _updateState(
+        heard: "No clear command detected.",
+        response: "Please repeat the command, Ian.",
+        intent: "empty_command",
+        action: "Waiting for a valid command.",
+        security: "Secure",
+      );
+      return;
+    }
+    if (_containsAny(command, [
+      "what are we doing today",
+      "start work",
+      "begin work",
+      "start project",
+    ])) {
+      _updateState(
+        heard: rawCommand,
+        response:
+            "I'm on it, Ian. Today we can continue building the LabVoice core.",
+        intent: "daily_start",
+        action:
+            "Priorities: open project, run app, analyze errors, automate tasks, and improve the Python backend.",
+        security: "Secure",
+      );
+      return;
+    }
 
-   if (command.isEmpty) {
-  _updateState(
-    heard: "No clear command detected.",
-    response: "Please repeat the command, Ian.",
-    intent: "empty_command",
-    action: "Waiting for a valid command.",
-    security: "Secure",
-  );
-  return;
-}
-if (_containsAny(command, [
-  "what are we doing today",
-  "start work",
-  "begin work",
-  "start project"
-])) {
-  _updateState(
-    heard: rawCommand,
-    response:
-        "I'm on it, Ian. Today we can continue building the LabVoice core.",
-    intent: "daily_start",
-    action:
-        "Priorities: open project, run app, analyze errors, automate tasks, and improve the Python backend.",
-    security: "Secure",
-  );
-  return;
-}
-
-if (intent == "open_vscode") {
-  LanguageManager.setLanguage("en");
-  await VoiceEngine.setEnglish();
-
-  _updateState(
-    heard: rawCommand,
-    response: LanguageManager.openVSCode(),
-    intent: "open_vscode",
-    action: "Connecting to Python backend.",
-    security: "Secure",
-  );
-
-  try {
-    final result = await ActionExecutor.openVSCode();
-
-    _updateState(
-      heard: rawCommand,
-      response:
-          result["message"] ??
-          LanguageManager.openVSCodeSuccess(),
-      intent: "open_vscode",
-      action: "OPEN_VSCODE executed.",
-      security: "Secure",
-    );
-  } catch (e) {
-    _updateState(
-      heard: rawCommand,
-      response: LanguageManager.backendError(),
-      intent: "backend_error",
-      action: e.toString(),
-      security: "Secure",
-    );
-  }
-
-  return;
-}
-
-if (intent == "open_project") {
-  final result = await ActionExecutor.openProject();
-
-  _updateState(
-    heard: rawCommand,
-    response:
-        result["message"] ?? "Project opened successfully.",
-    intent: "open_project",
-    action: "OPEN_PROJECT executed.",
-    security: "Secure",
-  );
-
-  return;
-}
-
-if (intent == "continue_work") {
-  _updateState(
-    heard: rawCommand,
-    response:
-        "Active project: ${_projectState?.project ?? "Unknown"}. "
-        "Current task: ${_sessionState?.currentTask ?? "No task"}. "
-        "Last action: ${_sessionState?.lastAction ?? "No record"}. "
-        "Next action: ${_sessionState?.nextAction ?? "No record"}. "
-        "I am ready to continue.",
-    intent: "continue_work",
-    action:
-        "Recovering project and session state from memory.",
-    security: "Secure",
-  );
-
-  return;
-}
-
-if (intent == "run_flutter") {
-  _updateState(
-    heard: rawCommand,
-    response: "Starting Flutter execution, Ian...",
-    intent: "run_flutter",
-    action: "Sending command to Python backend.",
-    security: "Secure",
-  );
-
-  try {
-    final result = await ActionExecutor.runFlutter();
-
-    _updateState(
-      heard: rawCommand,
-      response:
-          result["message"] ??
-          "Flutter started successfully.",
-      intent: "run_flutter",
-      action: "RUN_FLUTTER executed.",
-      security: "Secure",
-    );
-  } catch (e) {
-    _updateState(
-      heard: rawCommand,
-      response:
-          "I could not execute Flutter from the backend.",
-      intent: "backend_error",
-      action: e.toString(),
-      security: "Secure",
-    );
-  }
-
-  return;
-}
-if (intent == "open_terminal") {
-
-  final result =
-      await ActionExecutor.openTerminal();
-
-  _updateState(
-    heard: rawCommand,
-    response:
-        result["message"] ??
-        "Terminal opened successfully.",
-    intent: "open_terminal",
-    action: "OPEN_TERMINAL executed.",
-    security: "Secure",
-  );
-
-  return;
-}
-if (intent == "list_files") {
-
-  final result =
-      await LabVoiceApi.executeAction(
-        "LIST_FILES",
+    if (intent == "inspect_project") {
+      _updateState(
+        heard: rawCommand,
+        response: "Inspecting the active project.",
+        intent: "inspect_project",
+        action: "Reading project metadata and Git status.",
+        security: "Read only",
       );
 
-  _updateState(
-    heard: rawCommand,
-    response:
-        result["message"] ??
-        "Files loaded successfully.",
-    intent: "list_files",
-    action: "LIST_FILES executed.",
-    security: "Secure",
-  );
+      try {
+        final result = await ActionExecutor.inspectProject();
 
-  return;
-}
+        await _updateState(
+          heard: rawCommand,
+          response: result["message"] ?? "Project inspection completed.",
+          intent: "inspect_project",
+          action: "PROJECT_INSPECT completed.",
+          security: "Read only",
+        );
+      } catch (e) {
+        await _updateState(
+          heard: rawCommand,
+          response: "I could not inspect the project.",
+          intent: "backend_error",
+          action: e.toString(),
+          security: "Read only",
+        );
+      }
 
-if (_containsAny(command, [
-  "backup project",
-  "create backup",
-  "project backup"
-])) {
-  _updateState(
-    heard: rawCommand,
-    response: "I'm on it, Ian. Preparing project backup.",
-    intent: "backup_project",
-    action:
-        "Python will execute: cd ~/Desktop && zip -r LABVOICE_BACKUP.zip ian_labvoice",
-    security: "Secure",
-  );
-  return;
-}
+      return;
+    }
 
-if (_containsAny(command, [
-  "fix error",
-  "solve error",
-  "debug this",
-  "debug error"
-])) {
-  _updateState(
-    heard: rawCommand,
-    response:
-        "I'm on it, Ian. I will analyze the error and propose an exact solution.",
-    intent: "debug_error",
-    action:
-        "LabVoice will read terminal output, classify the error, and prepare a fix.",
-    security: "Confirmation required before modifying files",
-  );
-  return;
-}
+    if (intent == "open_vscode") {
+      LanguageManager.setLanguage("en");
+      await VoiceEngine.setEnglish();
 
-if (_containsAny(command, [
-  "automate this task",
-  "create automation",
-  "automate task"
-])) {
-  _updateState(
-    heard: rawCommand,
-    response:
-        "I'm on it, Ian. I will convert that task into executable steps.",
-    intent: "automate_task",
-    action:
-        "LabVoice will break the request into file operations, commands, testing, and validation.",
-    security: "Confirmation required",
-  );
-  return;
-}
+      _updateState(
+        heard: rawCommand,
+        response: LanguageManager.openVSCode(),
+        intent: "open_vscode",
+        action: "Connecting to Python backend.",
+        security: "Secure",
+      );
 
-if (_containsAny(command, [
-  "create file",
-  "new file"
-])) {
-  _updateState(
-    heard: rawCommand,
-    response:
-        "I'm on it, Ian. Preparing file creation.",
-    intent: "create_file",
-    action:
-        "Python will request path, filename, and content before writing to the project.",
-    security: "Confirmation required",
-  );
-  return;
-}
+      try {
+        final result = await ActionExecutor.openVSCode();
 
-if (_containsAny(command, [
-  "paste code",
-  "copy code"
-])) {
-  _updateState(
-    heard: rawCommand,
-    response:
-        "I'm on it, Ian. Preparing code insertion into the correct file.",
-    intent: "copy_paste_code",
-    action:
-        "LabVoice will identify the destination file, replace content, and save changes.",
-    security: "Confirmation required",
-  );
-  return;
-}
+        _updateState(
+          heard: rawCommand,
+          response: result["message"] ?? LanguageManager.openVSCodeSuccess(),
+          intent: "open_vscode",
+          action: "OPEN_VSCODE executed.",
+          security: "Secure",
+        );
+      } catch (e) {
+        _updateState(
+          heard: rawCommand,
+          response: LanguageManager.backendError(),
+          intent: "backend_error",
+          action: e.toString(),
+          security: "Secure",
+        );
+      }
 
-if (_containsAny(command, [
-  "continue where i left off",
-  "continue project"
-])) {
-  _updateState(
-    heard: rawCommand,
-    response:
-        "I'm on it, Ian. Restoring the project state.",
-    intent: "continue_work",
-    action:
-        "Reading saved state, modified files, and next pending task.",
-    security: "Secure",
-  );
-  return;
-}
+      return;
+    }
 
-final result = await LabVoiceApi.chat(rawCommand);
+    if (intent == "open_project") {
+      final result = await ActionExecutor.openProject();
 
-_updateState(
-  heard: rawCommand,
-  response: result["response"],
-  intent: "chat",
-  action: "GPT fallback",
-  security: "Secure",
-);
+      _updateState(
+        heard: rawCommand,
+        response: result["message"] ?? "Project opened successfully.",
+        intent: "open_project",
+        action: "OPEN_PROJECT executed.",
+        security: "Secure",
+      );
+
+      return;
+    }
+
+    if (intent == "continue_work") {
+      _updateState(
+        heard: rawCommand,
+        response:
+            "Active project: ${_projectState?.project ?? "Unknown"}. "
+            "Current task: ${_sessionState?.currentTask ?? "No task"}. "
+            "Last action: ${_sessionState?.lastAction ?? "No record"}. "
+            "Next action: ${_sessionState?.nextAction ?? "No record"}. "
+            "I am ready to continue.",
+        intent: "continue_work",
+        action: "Recovering project and session state from memory.",
+        security: "Secure",
+      );
+
+      return;
+    }
+
+    if (intent == "run_flutter") {
+      _updateState(
+        heard: rawCommand,
+        response: "Starting Flutter execution, Ian...",
+        intent: "run_flutter",
+        action: "Sending command to Python backend.",
+        security: "Secure",
+      );
+
+      try {
+        final result = await ActionExecutor.runFlutter();
+
+        _updateState(
+          heard: rawCommand,
+          response: result["message"] ?? "Flutter started successfully.",
+          intent: "run_flutter",
+          action: "RUN_FLUTTER executed.",
+          security: "Secure",
+        );
+      } catch (e) {
+        _updateState(
+          heard: rawCommand,
+          response: "I could not execute Flutter from the backend.",
+          intent: "backend_error",
+          action: e.toString(),
+          security: "Secure",
+        );
+      }
+
+      return;
+    }
+    if (intent == "open_terminal") {
+      final result = await ActionExecutor.openTerminal();
+
+      _updateState(
+        heard: rawCommand,
+        response: result["message"] ?? "Terminal opened successfully.",
+        intent: "open_terminal",
+        action: "OPEN_TERMINAL executed.",
+        security: "Secure",
+      );
+
+      return;
+    }
+    if (intent == "list_files") {
+      final result = await LabVoiceApi.executeAction("LIST_FILES");
+
+      _updateState(
+        heard: rawCommand,
+        response: result["message"] ?? "Files loaded successfully.",
+        intent: "list_files",
+        action: "LIST_FILES executed.",
+        security: "Secure",
+      );
+
+      return;
+    }
+
+    if (_containsAny(command, [
+      "backup project",
+      "create backup",
+      "project backup",
+    ])) {
+      _updateState(
+        heard: rawCommand,
+        response: "I'm on it, Ian. Preparing project backup.",
+        intent: "backup_project",
+        action:
+            "Python will execute: cd ~/Desktop && zip -r LABVOICE_BACKUP.zip ian_labvoice",
+        security: "Secure",
+      );
+      return;
+    }
+
+    if (_containsAny(command, [
+      "fix error",
+      "solve error",
+      "debug this",
+      "debug error",
+    ])) {
+      _updateState(
+        heard: rawCommand,
+        response:
+            "I'm on it, Ian. I will analyze the error and propose an exact solution.",
+        intent: "debug_error",
+        action:
+            "LabVoice will read terminal output, classify the error, and prepare a fix.",
+        security: "Confirmation required before modifying files",
+      );
+      return;
+    }
+
+    if (_containsAny(command, [
+      "automate this task",
+      "create automation",
+      "automate task",
+    ])) {
+      _updateState(
+        heard: rawCommand,
+        response:
+            "I'm on it, Ian. I will convert that task into executable steps.",
+        intent: "automate_task",
+        action:
+            "LabVoice will break the request into file operations, commands, testing, and validation.",
+        security: "Confirmation required",
+      );
+      return;
+    }
+
+    if (_containsAny(command, ["create file", "new file"])) {
+      _updateState(
+        heard: rawCommand,
+        response: "I'm on it, Ian. Preparing file creation.",
+        intent: "create_file",
+        action:
+            "Python will request path, filename, and content before writing to the project.",
+        security: "Confirmation required",
+      );
+      return;
+    }
+
+    if (_containsAny(command, ["paste code", "copy code"])) {
+      _updateState(
+        heard: rawCommand,
+        response:
+            "I'm on it, Ian. Preparing code insertion into the correct file.",
+        intent: "copy_paste_code",
+        action:
+            "LabVoice will identify the destination file, replace content, and save changes.",
+        security: "Confirmation required",
+      );
+      return;
+    }
+
+    if (_containsAny(command, [
+      "continue where i left off",
+      "continue project",
+    ])) {
+      _updateState(
+        heard: rawCommand,
+        response: "I'm on it, Ian. Restoring the project state.",
+        intent: "continue_work",
+        action: "Reading saved state, modified files, and next pending task.",
+        security: "Secure",
+      );
+      return;
+    }
+
+    final result = await LabVoiceApi.chat(rawCommand);
+
+    _updateState(
+      heard: rawCommand,
+      response: result["response"],
+      intent: "chat",
+      action: "GPT fallback",
+      security: "Secure",
+    );
   }
 
   bool _containsAny(String text, List<String> patterns) {
@@ -454,90 +449,76 @@ _updateState(
   }
 
   Future<void> _listen() async {
-  if (_isListening) return;
+    if (_isListening) return;
 
-  final available = await _speech.initialize(
-    onStatus: (status) async {
+    final available = await _speech.initialize(
+      onStatus: (status) async {
+        if (status == "done") {
+          setState(() {
+            _isListening = false;
+          });
 
-      if (status == "done") {
+          await Future.delayed(const Duration(milliseconds: 800));
 
+          _listen();
+        }
+      },
+      onError: (error) {
         setState(() {
           _isListening = false;
         });
-
-        await Future.delayed(
-          const Duration(milliseconds: 800),
-        );
-
-        _listen();
-      }
-    },
-    onError: (error) {
-
-      setState(() {
-        _isListening = false;
-      });
-    },
-  );
-
-  if (!available) {
-    _updateState(
-      heard: "Microphone unavailable.",
-      response: "I could not activate the microphone, Ian.",
-      intent: "microphone_error",
-      action: "Check browser or system permissions.",
-      security: "Secure",
+      },
     );
-    return;
+
+    if (!available) {
+      _updateState(
+        heard: "Microphone unavailable.",
+        response: "I could not activate the microphone, Ian.",
+        intent: "microphone_error",
+        action: "Check browser or system permissions.",
+        security: "Secure",
+      );
+      return;
+    }
+
+    setState(() {
+      _isListening = true;
+      _labVoiceResponse = "Listening, Ian...";
+    });
+
+    _speech.listen(
+      localeId: _selectedLanguageCode,
+      listenFor: const Duration(minutes: 10),
+      pauseFor: const Duration(seconds: 2),
+      onResult: (result) async {
+        if (result.finalResult) {
+          final command = result.recognizedWords.trim();
+
+          if (command.isEmpty) return;
+
+          print("COMMAND DETECTED: $command");
+
+          await _speech.stop();
+
+          setState(() {
+            _isListening = false;
+          });
+
+          await _processCommand(command);
+
+          await _speech.stop();
+
+          await Future.delayed(const Duration(milliseconds: 500));
+
+          // _listen();
+        } else {
+          setState(() {
+            _heardCommand = result.recognizedWords;
+          });
+        }
+      },
+    );
   }
-
-  setState(() {
-    _isListening = true;
-    _labVoiceResponse = "Listening, Ian...";
-  });
-
-  _speech.listen(
-    localeId: _selectedLanguageCode,
-    listenFor: const Duration(minutes: 10),
-    pauseFor: const Duration(seconds: 2),
-    onResult: (result) async {
-
-      if (result.finalResult) {
-
-        final command =
-            result.recognizedWords.trim();
-
-        if (command.isEmpty) return;
-
-        print(
-          "COMMAND DETECTED: $command",
-        );
-
-        await _speech.stop();
-
-        setState(() {
-          _isListening = false;
-        });
-
-        await _processCommand(command);
-
-        await _speech.stop();
-
-        await Future.delayed(
-          const Duration(milliseconds: 500),
-        );
-
-        // _listen();
-      } else {
-
-        setState(() {
-          _heardCommand =
-              result.recognizedWords;
-        });
-      }
-    },
-  );
-}
 
   Widget _buildCard(String title, String value, IconData icon) {
     return Card(
@@ -573,7 +554,7 @@ _updateState(
           _selectedLanguageCode = value;
           _selectedLanguageName = selectedName;
           _labVoiceResponse =
-    "Language updated to $selectedName. Ready for commands.";
+              "Language updated to $selectedName. Ready for commands.";
         });
       },
     );
@@ -587,8 +568,8 @@ _updateState(
             controller: _commandController,
             decoration: const InputDecoration(
               border: OutlineInputBorder(),
-             labelText: "Command for LabVoice",
-             hintText: "Example: debug Flutter error",
+              labelText: "Command for LabVoice",
+              hintText: "Example: debug Flutter error",
             ),
             onSubmitted: (_) => _sendTypedCommand(),
           ),
@@ -603,18 +584,19 @@ _updateState(
   }
 
   Widget _buildDeveloperCommands() {
-   final commands = [
-  "What are we building today?",
-  "Open VS Code",
-  "Open LabVoice Project",
-  "Run Flutter",
-  "Backup Project",
-  "Debug Error",
-  "Automate Task",
-  "Create File",
-  "Copy and Paste Code",
-  "Continue Work",
-];
+    final commands = [
+      "What are we building today?",
+      "Inspect Project",
+      "Open VS Code",
+      "Open LabVoice Project",
+      "Run Flutter",
+      "Backup Project",
+      "Debug Error",
+      "Automate Task",
+      "Create File",
+      "Copy and Paste Code",
+      "Continue Work",
+    ];
 
     return Wrap(
       spacing: 8,
@@ -631,18 +613,24 @@ _updateState(
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("LABVOICE DEV COMMAND CENTER"),
-      ),
+      appBar: AppBar(title: const Text("LABVOICE DEV COMMAND CENTER")),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(18),
           child: Column(
             children: [
-              _buildCard("LabVoice Response", _labVoiceResponse, Icons.assistant),
+              _buildCard(
+                "LabVoice Response",
+                _labVoiceResponse,
+                Icons.assistant,
+              ),
               _buildLanguageSelector(),
               const SizedBox(height: 12),
-              _buildCard("Active Language", _selectedLanguageName, Icons.language),
+              _buildCard(
+                "Active Language",
+                _selectedLanguageName,
+                Icons.language,
+              ),
               _buildCard("Heard Command", _heardCommand, Icons.hearing),
               _buildCard("Detected Intent", _detectedIntent, Icons.psychology),
               _buildCard("Technical Action", _technicalAction, Icons.terminal),

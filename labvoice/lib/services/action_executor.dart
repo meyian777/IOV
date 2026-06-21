@@ -1,28 +1,23 @@
 import 'labvoice_api.dart';
 
 class ActionExecutor {
+  static Future<Map<String, dynamic>> inspectProject() async {
+    return await LabVoiceApi.inspectProject();
+  }
 
   static Future<Map<String, dynamic>> openVSCode() async {
-    return await LabVoiceApi.executeAction(
-      "OPEN_VSCODE",
-    );
+    return await LabVoiceApi.executeAction("OPEN_VSCODE");
   }
 
   static Future<Map<String, dynamic>> openProject() async {
-    return await LabVoiceApi.executeAction(
-      "OPEN_PROJECT",
-    );
+    return await LabVoiceApi.executeAction("OPEN_PROJECT");
   }
 
   static Future<Map<String, dynamic>> runFlutter() async {
-    return await LabVoiceApi.executeAction(
-      "RUN_FLUTTER",
-    );
+    return await LabVoiceApi.executeAction("RUN_FLUTTER");
   }
 
   static Future<Map<String, dynamic>> openTerminal() async {
-    return await LabVoiceApi.executeAction(
-      "OPEN_TERMINAL",
-    );
+    return await LabVoiceApi.executeAction("OPEN_TERMINAL");
   }
 }

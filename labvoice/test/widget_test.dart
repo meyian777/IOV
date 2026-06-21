@@ -5,6 +5,6 @@ void main() {
   testWidgets('LabVoice inicia correctamente', (WidgetTester tester) async {
     await tester.pumpWidget(const LabVoiceApp());
 
-    expect(find.text('LABVOICE'), findsOneWidget);
+    expect(find.text('LABVOICE DEV COMMAND CENTER'), findsOneWidget);
   });
 }
