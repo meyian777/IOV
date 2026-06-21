@@ -40,6 +40,27 @@ flutter run -d chrome
 
 The frontend currently expects the backend at `http://127.0.0.1:8000`.
 
+## Native macOS test
+
+LabVoice is intended to become a native desktop application rather than depend
+on a browser. The macOS test requires:
+
+- A complete Xcode installation with command-line tools selected.
+- CocoaPods for the current voice plugins.
+- The backend virtual environment and `python_backend/.env`.
+
+After those prerequisites are installed, start the backend and macOS app
+together:
+
+```bash
+./scripts/run_macos.sh
+```
+
+The launcher stops the local backend automatically when the Flutter app exits.
+For the first microphone and speech-recognition permission request, running the
+macOS target directly from Xcode may be necessary because of a known Flutter
+development limitation.
+
 ## Security
 
 - Never commit `.env` files or API keys.
