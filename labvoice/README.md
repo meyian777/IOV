@@ -1,17 +1,42 @@
-# labvoice
+# LabVoice
 
-A new Flutter project.
+Voice-first developer operating system.
 
-## Getting Started
+## Architecture
 
-This project is a starting point for a Flutter application.
+Frontend:
+- Flutter
 
-A few resources to get you started if this is your first Flutter project:
+Backend:
+- FastAPI
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+AI:
+- OpenAI
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## Run Backend
+
+cd ~/Desktop/ian_labvoice/python_backend
+source venv/bin/activate
+uvicorn main:app --reload
+
+## Run Frontend
+
+cd ~/Desktop/ian_labvoice/labvoice
+flutter run -d chrome
+
+## Current Features
+
+- Voice recognition
+- Text to speech
+- Open VS Code
+- Open Project
+- Open Terminal
+- Run Flutter
+- Project memory
+- Session memory
+- GPT integration
+- File listing
+
+## Vision
+
+LabVoice is being built as a voice-first developer operating system capable of controlling projects, tools, agents, files and automation through natural language.
