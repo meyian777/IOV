@@ -1,22 +1,15 @@
 import 'package:flutter_tts/flutter_tts.dart';
 
 class VoiceEngine {
-
   static final FlutterTts _tts = FlutterTts();
 
   static bool _initialized = false;
 
   static Future<void> initialize() async {
-
     if (_initialized) return;
-    
+
     await _tts.setLanguage("en-US");
-
-    var voices = await _tts.getVoices;
-    print("AVAILABLE VOICES:");
-    print(voices);
-
-   await _tts.setSpeechRate(0.75);
+    await _tts.setSpeechRate(0.75);
 
     await _tts.setVolume(1.0);
 
@@ -25,10 +18,7 @@ class VoiceEngine {
     _initialized = true;
   }
 
-  static Future<void> speak(
-    String text,
-  ) async {
-
+  static Future<void> speak(String text) async {
     await initialize();
 
     await _tts.stop();
@@ -37,14 +27,12 @@ class VoiceEngine {
   }
 
   static Future<void> setSpanish() async {
-
     await initialize();
 
     await _tts.setLanguage("es-ES");
   }
 
   static Future<void> setEnglish() async {
-
     await initialize();
 
     await _tts.setLanguage("en-US");

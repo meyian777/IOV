@@ -1,18 +1,16 @@
 class LanguageManager {
-
   static String currentLanguage = "en";
 
   static void setLanguage(String language) {
     currentLanguage = language;
-    print("LANGUAGE CHANGED TO: $currentLanguage");
   }
 
   static bool isEnglish() {
-    return true;
+    return currentLanguage == "en";
   }
 
   static bool isSpanish() {
-    return false;
+    return currentLanguage == "es";
   }
 
   static String openVSCode() {

@@ -6,4 +6,9 @@ void main() {
     expect(IntentEngine.detectIntent('analiza el proyecto'), 'inspect_project');
     expect(IntentEngine.detectIntent('inspect project'), 'inspect_project');
   });
+
+  test('detecta la intención de ejecutar diagnósticos', () {
+    expect(IntentEngine.detectIntent('ejecuta las pruebas'), 'run_diagnostics');
+    expect(IntentEngine.detectIntent('run diagnostics'), 'run_diagnostics');
+  });
 }

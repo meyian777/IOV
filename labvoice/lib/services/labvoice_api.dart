@@ -28,6 +28,18 @@ class LabVoiceApi {
     return jsonDecode(response.body);
   }
 
+  static Future<Map<String, dynamic>> runDiagnostics() async {
+    final response = await http
+        .post(Uri.parse("$baseUrl/project/diagnostics"))
+        .timeout(const Duration(minutes: 5));
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception("Project diagnostics failed: ${response.statusCode}");
+    }
+
+    return jsonDecode(response.body);
+  }
+
   static Future<Map<String, dynamic>> executeAction(String action) async {
     final response = await http.post(
       Uri.parse("$baseUrl/execute"),

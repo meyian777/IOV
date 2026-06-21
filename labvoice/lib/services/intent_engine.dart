@@ -2,6 +2,16 @@ class IntentEngine {
   static String detectIntent(String command) {
     final text = command.toLowerCase().trim();
 
+    if (text.contains("ejecuta diagnosticos") ||
+        text.contains("ejecuta diagnósticos") ||
+        text.contains("ejecuta las pruebas") ||
+        text.contains("corre las pruebas") ||
+        text.contains("analiza y prueba") ||
+        text.contains("run diagnostics") ||
+        text.contains("run tests")) {
+      return "run_diagnostics";
+    }
+
     if (text.contains("analiza el proyecto") ||
         text.contains("inspecciona el proyecto") ||
         text.contains("estado del proyecto") ||

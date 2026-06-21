@@ -5,6 +5,10 @@ class ActionExecutor {
     return await LabVoiceApi.inspectProject();
   }
 
+  static Future<Map<String, dynamic>> runDiagnostics() async {
+    return await LabVoiceApi.runDiagnostics();
+  }
+
   static Future<Map<String, dynamic>> openVSCode() async {
     return await LabVoiceApi.executeAction("OPEN_VSCODE");
   }

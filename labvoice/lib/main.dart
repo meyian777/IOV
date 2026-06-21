@@ -76,9 +76,7 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
   }
 
   Future<void> _initializeSpeech() async {
-    final available = await _speech.initialize();
-
-    print("Speech initialized: $available");
+    await _speech.initialize();
   }
 
   Future<void> _loadProjectMemory() async {
@@ -96,8 +94,6 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
             "What are we building today?";
       });
     } catch (e) {
-      print("MEMORY ERROR: $e");
-
       setState(() {
         _labVoiceResponse = "MEMORY ERROR: $e";
       });
@@ -181,6 +177,42 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
           intent: "backend_error",
           action: e.toString(),
           security: "Read only",
+        );
+      }
+
+      return;
+    }
+
+    if (intent == "run_diagnostics") {
+      await _updateState(
+        heard: rawCommand,
+        response: "Running project analysis and tests.",
+        intent: "run_diagnostics",
+        action: "Executing approved diagnostic tools.",
+        security: "Controlled execution",
+      );
+
+      try {
+        final result = await ActionExecutor.runDiagnostics();
+        final summary = result["summary"] as Map<String, dynamic>?;
+        final failed = summary?["failed"] ?? 0;
+
+        await _updateState(
+          heard: rawCommand,
+          response: result["message"] ?? "Project diagnostics completed.",
+          intent: "run_diagnostics",
+          action: failed == 0
+              ? "All diagnostic checks passed."
+              : "$failed diagnostic checks require attention.",
+          security: "Controlled execution",
+        );
+      } catch (e) {
+        await _updateState(
+          heard: rawCommand,
+          response: "I could not complete the project diagnostics.",
+          intent: "backend_error",
+          action: e.toString(),
+          security: "Controlled execution",
         );
       }
 
@@ -490,16 +522,16 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
     });
 
     _speech.listen(
-      localeId: _selectedLanguageCode,
-      listenFor: const Duration(minutes: 10),
-      pauseFor: const Duration(seconds: 2),
+      listenOptions: stt.SpeechListenOptions(
+        localeId: _selectedLanguageCode,
+        listenFor: const Duration(minutes: 10),
+        pauseFor: const Duration(seconds: 2),
+      ),
       onResult: (result) async {
         if (result.finalResult) {
           final command = result.recognizedWords.trim();
 
           if (command.isEmpty) return;
-
-          print("COMMAND DETECTED: $command");
 
           await _speech.stop();
 
@@ -590,6 +622,7 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
     final commands = [
       "What are we building today?",
       "Inspect Project",
+      "Run Diagnostics",
       "Open VS Code",
       "Open LabVoice Project",
       "Run Flutter",

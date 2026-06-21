@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 import os
 
 from action_engine import ActionEngine
+from diagnostics_runner import DiagnosticsRunner
 from project_inspector import ProjectInspector
 from session_store import SessionStore
 
@@ -88,6 +89,26 @@ def inspect_project():
                 "active_project": project["name"],
             }
         )
+
+    return result
+
+
+@app.post("/project/diagnostics")
+def run_project_diagnostics():
+    result = DiagnosticsRunner.run(PROJECT_PATH)
+    summary = result.get("summary", {})
+
+    session_store.update(
+        {
+            "current_task": "Run project diagnostics",
+            "last_action": result["message"],
+            "next_action": (
+                "Review failed diagnostics"
+                if summary.get("failed", 0)
+                else "Choose the next development task"
+            ),
+        }
+    )
 
     return result
 
