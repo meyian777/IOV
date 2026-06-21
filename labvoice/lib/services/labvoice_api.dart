@@ -54,11 +54,14 @@ class LabVoiceApi {
     );
   }
 
-  static Future<Map<String, dynamic>> chat(String message) async {
+  static Future<Map<String, dynamic>> chat(
+    String message, {
+    required String language,
+  }) async {
     return _request(
       "POST",
       "/chat",
-      body: {"message": message},
+      body: {"message": message, "language": language},
       timeout: const Duration(seconds: 60),
     );
   }

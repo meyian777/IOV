@@ -43,6 +43,7 @@ class ConfirmationRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=10000)
+    language: str = Field(default="es", min_length=2, max_length=10)
 
 
 class SessionUpdate(BaseModel):
@@ -223,17 +224,31 @@ and orchestrate tools.
 Always identify yourself as LabVoice.
 
 Keep responses concise, practical, and action-oriented.
+Your voice should feel technologically capable, calm, warm, and confident.
+Avoid sounding corporate, theatrical, or overly enthusiastic.
 """
 
 @app.post("/chat")
 def chat(request: ChatRequest):
+    session = session_store.get()
+    context = (
+        f"Active project: {session['active_project']}. "
+        f"Current goal: {session['current_goal']}. "
+        f"Current task: {session['current_task']}. "
+        f"Last action: {session['last_action']}. "
+        f"Next action: {session['next_action']}."
+    )
     try:
         response = client.responses.create(
             model="gpt-5",
             input=[
                 {
                     "role": "system",
-                    "content": SYSTEM_PROMPT,
+                    "content": (
+                        f"{SYSTEM_PROMPT}\n"
+                        f"Respond in language code: {request.language}.\n"
+                        f"Current operational context: {context}"
+                    ),
                 },
                 {
                     "role": "user",

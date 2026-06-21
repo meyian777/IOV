@@ -27,3 +27,20 @@ class ChatApiTest(unittest.TestCase):
             "ai_service_unavailable",
         )
         self.assertNotIn("secret provider details", response.text)
+
+    @patch("main.client.responses.create")
+    def test_chat_receives_language_and_session_context(self, create):
+        create.return_value.output_text = "Entendido."
+
+        response = TestClient(app).post(
+            "/chat",
+            json={
+                "message": "¿Qué sigue?",
+                "language": "es",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        system_content = create.call_args.kwargs["input"][0]["content"]
+        self.assertIn("Respond in language code: es", system_content)
+        self.assertIn("Current operational context", system_content)

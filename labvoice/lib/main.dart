@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 
@@ -43,27 +45,19 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
 
   bool _isListening = false;
 
-  String _selectedLanguageCode = "en_US";
-  String _selectedLanguageName = "English";
+  String _selectedLanguageCode = "es_ES";
+  String _selectedLanguageName = "Español";
 
-  String _heardCommand = "No command received yet.";
-  String _labVoiceResponse = "Ian, what are we building today?";
-  String _detectedIntent = "Waiting for command";
-  String _technicalAction = "No pending action";
-  String _securityLevel = "Secure";
+  String _heardCommand = "Todavía no he recibido ningún comando.";
+  String _labVoiceResponse = "Ian, ¿qué vamos a construir hoy?";
+  String _detectedIntent = "Esperando un comando";
+  String _technicalAction = "Sin acciones pendientes";
+  String _securityLevel = "Seguro";
   String? _pendingConfirmationToken;
   String? _pendingActionName;
   final Map<String, String> _languages = {
-    "Español": "es_ES",
-    "English": "en_US",
-    "Português": "pt_BR",
-    "Français": "fr_FR",
-    "Deutsch": "de_DE",
-    "Italiano": "it_IT",
-    "Русский": "ru_RU",
-    "中文 Mandarin": "zh_CN",
-    "日本語": "ja_JP",
-    "한국어": "ko_KR",
+    for (final entry in LanguageManager.profiles.entries)
+      entry.value.name: entry.key,
   };
 
   @override
@@ -73,6 +67,7 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
     _speech = stt.SpeechToText();
 
     _initializeSpeech();
+    VoiceEngine.setLanguage(LanguageManager.current.voiceLocale);
 
     _loadProjectMemory();
   }
@@ -88,16 +83,19 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
 
       setState(() {
         _labVoiceResponse =
-            "Good morning ${project.owner}. "
-            "Active project: ${project.project}. "
-            "Current task: ${session.currentTask}. "
-            "Last action: ${session.lastAction}. "
-            "Next action: ${session.nextAction}. "
-            "What are we building today?";
+            "Buenos días, ${project.owner}. "
+            "Proyecto activo: ${project.project}. "
+            "Tarea actual: ${session.currentTask}. "
+            "Última acción: ${session.lastAction}. "
+            "Siguiente paso: ${session.nextAction}. "
+            "¿Qué vamos a construir hoy?";
       });
     } catch (e) {
       setState(() {
-        _labVoiceResponse = "MEMORY ERROR: $e";
+        _labVoiceResponse = LanguageManager.text(
+          "No pude recuperar la memoria: $e",
+          "I could not recover memory: $e",
+        );
       });
     }
   }
@@ -130,7 +128,7 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
     if (command.isEmpty) {
       _updateState(
         heard: "No clear command detected.",
-        response: "Please repeat the command, Ian.",
+        response: LanguageManager.noClearCommand(),
         intent: "empty_command",
         action: "Waiting for a valid command.",
         security: "Secure",
@@ -145,8 +143,10 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
     ])) {
       _updateState(
         heard: rawCommand,
-        response:
-            "I'm on it, Ian. Today we can continue building the LabVoice core.",
+        response: LanguageManager.text(
+          "Estoy listo, Ian. Hoy podemos continuar construyendo el núcleo de LabVoice.",
+          "I'm ready, Ian. Today we can continue building the LabVoice core.",
+        ),
         intent: "daily_start",
         action:
             "Priorities: open project, run app, analyze errors, automate tasks, and improve the Python backend.",
@@ -158,7 +158,10 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
     if (intent == "inspect_project") {
       _updateState(
         heard: rawCommand,
-        response: "Inspecting the active project.",
+        response: LanguageManager.text(
+          "Estoy inspeccionando el proyecto activo.",
+          "Inspecting the active project.",
+        ),
         intent: "inspect_project",
         action: "Reading project metadata and Git status.",
         security: "Read only",
@@ -169,7 +172,10 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
 
         await _updateState(
           heard: rawCommand,
-          response: result["message"] ?? "Project inspection completed.",
+          response: LanguageManager.text(
+            "Inspección completada. Encontré ${result["project"]?["file_count"] ?? 0} archivos y las tecnologías ${((result["project"]?["technologies"] as List?) ?? []).join(", ")}.",
+            result["message"] ?? "Project inspection completed.",
+          ),
           intent: "inspect_project",
           action: "PROJECT_INSPECT completed.",
           security: "Read only",
@@ -177,7 +183,10 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
       } catch (e) {
         await _updateState(
           heard: rawCommand,
-          response: "I could not inspect the project.",
+          response: LanguageManager.text(
+            "No pude inspeccionar el proyecto.",
+            "I could not inspect the project.",
+          ),
           intent: "backend_error",
           action: e.toString(),
           security: "Read only",
@@ -190,7 +199,10 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
     if (intent == "run_diagnostics") {
       await _updateState(
         heard: rawCommand,
-        response: "Running project analysis and tests.",
+        response: LanguageManager.text(
+          "Estoy ejecutando el análisis y las pruebas del proyecto.",
+          "Running project analysis and tests.",
+        ),
         intent: "run_diagnostics",
         action: "Executing approved diagnostic tools.",
         security: "Controlled execution",
@@ -203,7 +215,10 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
 
         await _updateState(
           heard: rawCommand,
-          response: result["message"] ?? "Project diagnostics completed.",
+          response: LanguageManager.text(
+            "Diagnóstico completado: ${summary?["passed"] ?? 0} comprobaciones correctas y $failed con errores.",
+            result["message"] ?? "Project diagnostics completed.",
+          ),
           intent: "run_diagnostics",
           action: failed == 0
               ? "All diagnostic checks passed."
@@ -213,7 +228,10 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
       } catch (e) {
         await _updateState(
           heard: rawCommand,
-          response: "I could not complete the project diagnostics.",
+          response: LanguageManager.text(
+            "No pude completar el diagnóstico del proyecto.",
+            "I could not complete the project diagnostics.",
+          ),
           intent: "backend_error",
           action: e.toString(),
           security: "Controlled execution",
@@ -224,9 +242,6 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
     }
 
     if (intent == "open_vscode") {
-      LanguageManager.setLanguage("en");
-      await VoiceEngine.setEnglish();
-
       await _requestAction(
         rawCommand: rawCommand,
         intent: "open_vscode",
@@ -263,7 +278,10 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
       } catch (e) {
         await _updateState(
           heard: rawCommand,
-          response: "I could not recover the saved session.",
+          response: LanguageManager.text(
+            "No pude recuperar la sesión guardada.",
+            "I could not recover the saved session.",
+          ),
           intent: "backend_error",
           action: e.toString(),
           security: "Read only",
@@ -393,7 +411,10 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
 
   Future<void> _runChat(String rawCommand, String message) async {
     try {
-      final result = await LabVoiceApi.chat(message);
+      final result = await LabVoiceApi.chat(
+        message,
+        language: LanguageManager.current.languageTag,
+      );
       await _updateState(
         heard: rawCommand,
         response: result["response"] ?? "I could not produce a response.",
@@ -426,7 +447,7 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
 
         await _updateState(
           heard: rawCommand,
-          response: result["message"] ?? "Confirmation required.",
+          response: LanguageManager.confirmationRequired(actionName),
           intent: intent,
           action: "$actionName is waiting for confirmation.",
           security: result["policy"]?["risk"] ?? "Confirmation required",
@@ -436,7 +457,10 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
 
       await _updateState(
         heard: rawCommand,
-        response: result["message"] ?? "$actionName completed.",
+        response: LanguageManager.text(
+          LanguageManager.actionCompleted(actionName),
+          result["message"] ?? "$actionName completed.",
+        ),
         intent: intent,
         action: "$actionName executed.",
         security: result["policy"]?["risk"] ?? "Controlled",
@@ -458,7 +482,10 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
     if (token == null || actionName == null) {
       await _updateState(
         heard: rawCommand,
-        response: "There is no pending action to confirm.",
+        response: LanguageManager.text(
+          "No hay ninguna acción pendiente para confirmar.",
+          "There is no pending action to confirm.",
+        ),
         intent: "confirm_action",
         action: "No pending confirmation.",
         security: "Secure",
@@ -473,7 +500,10 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
 
       await _updateState(
         heard: rawCommand,
-        response: result["message"] ?? "$actionName completed.",
+        response: LanguageManager.text(
+          LanguageManager.actionCompleted(actionName),
+          result["message"] ?? "$actionName completed.",
+        ),
         intent: "confirm_action",
         action: "$actionName confirmed and executed.",
         security: "Confirmed",
@@ -496,7 +526,10 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
     if (token == null) {
       await _updateState(
         heard: rawCommand,
-        response: "There is no pending action to cancel.",
+        response: LanguageManager.text(
+          "No hay ninguna acción pendiente para cancelar.",
+          "There is no pending action to cancel.",
+        ),
         intent: "cancel_action",
         action: "No pending confirmation.",
         security: "Secure",
@@ -511,7 +544,10 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
 
       await _updateState(
         heard: rawCommand,
-        response: result["message"] ?? "Pending action canceled.",
+        response: LanguageManager.text(
+          "Acción pendiente cancelada.",
+          result["message"] ?? "Pending action canceled.",
+        ),
         intent: "cancel_action",
         action: "Pending action canceled.",
         security: "Secure",
@@ -540,7 +576,6 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
     required String action,
     required String security,
   }) async {
-    await VoiceEngine.speak(response);
     setState(() {
       _heardCommand = heard;
       _labVoiceResponse = response;
@@ -548,6 +583,7 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
       _technicalAction = action;
       _securityLevel = security;
     });
+    unawaited(VoiceEngine.speak(response));
   }
 
   void _sendTypedCommand() {
@@ -581,7 +617,10 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
     if (!available) {
       _updateState(
         heard: "Microphone unavailable.",
-        response: "I could not activate the microphone, Ian.",
+        response: LanguageManager.text(
+          "No pude activar el micrófono, Ian.",
+          "I could not activate the microphone, Ian.",
+        ),
         intent: "microphone_error",
         action: "Check browser or system permissions.",
         security: "Secure",
@@ -591,7 +630,7 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
 
     setState(() {
       _isListening = true;
-      _labVoiceResponse = "Listening, Ian...";
+      _labVoiceResponse = LanguageManager.listening();
     });
 
     _speech.listen(
@@ -651,19 +690,18 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
           child: Text(entry.key),
         );
       }).toList(),
-      onChanged: (value) {
+      onChanged: (value) async {
         if (value == null) return;
 
-        final selectedName = _languages.entries
-            .firstWhere((entry) => entry.value == value)
-            .key;
+        LanguageManager.setLanguage(value);
+        await VoiceEngine.setLanguage(LanguageManager.current.voiceLocale);
 
         setState(() {
-          _selectedLanguageCode = value;
-          _selectedLanguageName = selectedName;
-          _labVoiceResponse =
-              "Language updated to $selectedName. Ready for commands.";
+          _selectedLanguageCode = LanguageManager.current.recognitionLocale;
+          _selectedLanguageName = LanguageManager.current.name;
+          _labVoiceResponse = LanguageManager.languageUpdated();
         });
+        unawaited(VoiceEngine.speak(LanguageManager.languageUpdated()));
       },
     );
   }
