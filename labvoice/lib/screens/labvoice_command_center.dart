@@ -53,7 +53,7 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
     _controller.setListening(true);
     await _speech.listen(
       listenOptions: stt.SpeechListenOptions(
-        localeId: LanguageManager.current.recognitionLocale,
+        localeId: LanguageManager.activeRecognitionLocale,
         listenFor: const Duration(minutes: 10),
         pauseFor: const Duration(seconds: 2),
       ),
@@ -161,7 +161,7 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
             const SizedBox(height: 12),
             _card(
               "Active Language",
-              _controller.selectedLanguageName,
+              _controller.activeLanguageName,
               Icons.language,
             ),
             _card("Heard Command", _controller.heardCommand, Icons.hearing),

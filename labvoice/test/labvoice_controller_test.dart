@@ -19,6 +19,7 @@ void main() {
     final controller = LabVoiceController();
 
     expect(controller.languages['Automático'], 'auto');
+    expect(controller.activeLanguageName, 'Español');
     expect(controller.languages['English'], 'en_US');
     expect(controller.languages['Español'], 'es_ES');
   });

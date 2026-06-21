@@ -12,7 +12,8 @@ from permission_engine import PermissionEngine
 from project_inspector import ProjectInspector
 from session_store import SessionStore
 
-load_dotenv()
+BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(BACKEND_DIR, ".env"), override=True)
 
 client = OpenAI(
     api_key=os.getenv("OPENAI_API_KEY")

@@ -89,14 +89,17 @@ class LanguageManager {
   static String get effectiveLanguage => _current.languageTag == "auto"
       ? _effectiveLanguage
       : _current.languageTag;
+  static String? get activeRecognitionLocale => _current.languageTag == "auto"
+      ? profileForLanguage(_effectiveLanguage).recognitionLocale
+      : _current.recognitionLocale;
   static String get activeVoiceLocale =>
       profileForLanguage(effectiveLanguage).voiceLocale;
 
   static void setLanguage(String recognitionLocale) {
     _current = profiles[recognitionLocale] ?? profiles["auto"]!;
-    if (_current.languageTag != "auto") {
-      _effectiveLanguage = _current.languageTag;
-    }
+    _effectiveLanguage = _current.languageTag == "auto"
+        ? "es"
+        : _current.languageTag;
   }
 
   static String detectLanguage(String text) {
@@ -108,8 +111,35 @@ class LanguageManager {
     if (RegExp(r'[\u0400-\u04ff]').hasMatch(text)) return "ru";
 
     const markers = {
-      "es": [" el ", " la ", " que ", " por ", " para ", "hola", "proyecto"],
-      "en": [" the ", " and ", " what ", " for ", "hello", "project", "open "],
+      "es": [
+        " el ",
+        " la ",
+        " que ",
+        " por ",
+        " para ",
+        "hola",
+        "proyecto",
+        "abre",
+        "ejecuta",
+        "quiero",
+        "puedes",
+        "siguiente",
+      ],
+      "en": [
+        " the ",
+        " and ",
+        " what ",
+        " for ",
+        "hello",
+        "project",
+        "open ",
+        "while",
+        "run ",
+        "please",
+        "next",
+        "can you",
+        "i want",
+      ],
       "pt": [" você ", " para ", " projeto", "olá", " abrir "],
       "fr": [" le ", " la ", " pour ", "bonjour", " projet"],
       "de": [" der ", " die ", " und ", "hallo", " projekt"],

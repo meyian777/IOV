@@ -23,6 +23,13 @@ class LabVoiceController extends ChangeNotifier {
   String? _pendingConfirmationToken;
   String? _pendingActionName;
 
+  String get activeLanguageName {
+    if (selectedLanguageCode != "auto") return selectedLanguageName;
+    return LanguageManager.profileForLanguage(
+      LanguageManager.effectiveLanguage,
+    ).name;
+  }
+
   Map<String, String> get languages => {
     for (final entry in LanguageManager.profiles.entries)
       entry.value.name: entry.key,

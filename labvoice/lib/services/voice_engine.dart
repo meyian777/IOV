@@ -4,6 +4,27 @@ class VoiceEngine {
   static final FlutterTts _tts = FlutterTts();
   static bool _initialized = false;
   static String _activeLocale = "es-ES";
+  static const Map<String, List<String>> _preferredVoices = {
+    "es": ["Mónica", "Paulina", "Flo", "Sandy", "Reed"],
+    "en": ["Samantha", "Ava", "Flo", "Sandy", "Reed"],
+  };
+  static const List<String> _effectVoices = [
+    "albert",
+    "bad news",
+    "bahh",
+    "bells",
+    "boing",
+    "bubbles",
+    "cellos",
+    "good news",
+    "jester",
+    "organ",
+    "superstar",
+    "trinoids",
+    "whisper",
+    "wobble",
+    "zarvox",
+  ];
 
   static Future<void> initialize() async {
     if (_initialized) return;
@@ -48,14 +69,21 @@ class VoiceEngine {
         )
         .where((voice) {
           final voiceLocale = (voice["locale"] ?? "").toLowerCase();
-          return voiceLocale == locale.toLowerCase() ||
-              voiceLocale.startsWith("$language-") ||
-              voiceLocale.startsWith("${language}_");
+          final name = (voice["name"] ?? "").toLowerCase();
+          final isEffect = _effectVoices.any(
+            (effect) => name == effect || name.startsWith("$effect "),
+          );
+          return !isEffect &&
+              (voiceLocale == locale.toLowerCase() ||
+                  voiceLocale.startsWith("$language-") ||
+                  voiceLocale.startsWith("${language}_"));
         })
         .toList();
 
     if (candidates.isEmpty) return;
-    candidates.sort((a, b) => _voiceScore(b).compareTo(_voiceScore(a)));
+    candidates.sort(
+      (a, b) => _voiceScore(b, language).compareTo(_voiceScore(a, language)),
+    );
     final selected = candidates.first;
     final identifier = selected["identifier"];
 
@@ -71,10 +99,18 @@ class VoiceEngine {
     }
   }
 
-  static int _voiceScore(Map<String, String> voice) {
+  static int _voiceScore(Map<String, String> voice, String language) {
     final description = voice.values.join(" ").toLowerCase();
+    final name = (voice["name"] ?? "").toLowerCase();
     var score = 0;
 
+    final preferences = _preferredVoices[language] ?? const [];
+    for (var index = 0; index < preferences.length; index++) {
+      if (name.startsWith(preferences[index].toLowerCase())) {
+        score += 100 - index;
+        break;
+      }
+    }
     for (final quality in ["premium", "enhanced", "neural", "natural"]) {
       if (description.contains(quality)) score += 20;
     }

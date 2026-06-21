@@ -26,7 +26,9 @@ void main() {
   test('automatic mode detects English and Spanish text', () {
     LanguageManager.setLanguage('auto');
 
+    expect(LanguageManager.activeRecognitionLocale, 'es_ES');
     expect(LanguageManager.alignToText('Open the project and run tests'), 'en');
+    expect(LanguageManager.activeRecognitionLocale, 'en_US');
     expect(LanguageManager.activeVoiceLocale, 'en-US');
 
     expect(
@@ -34,6 +36,13 @@ void main() {
       'es',
     );
     expect(LanguageManager.activeVoiceLocale, 'es-ES');
+  });
+
+  test('automatic mode recognizes short English transition words', () {
+    LanguageManager.setLanguage('auto');
+
+    expect(LanguageManager.alignToText('While'), 'en');
+    expect(LanguageManager.activeRecognitionLocale, 'en_US');
   });
 
   test('automatic mode detects non Latin scripts', () {
