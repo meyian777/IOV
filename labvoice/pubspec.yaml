@@ -16,6 +16,7 @@ dependencies:
   url_launcher: ^6.3.0
   http: ^1.5.0
   cupertino_icons: ^1.0.8
+  audioplayers: ^6.7.1
 
 dev_dependencies:
   flutter_test:

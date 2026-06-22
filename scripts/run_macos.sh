@@ -65,6 +65,7 @@ trap cleanup EXIT INT TERM
 
 cd "$FLUTTER_DIR"
 flutter pub get
+pod install --project-directory=macos
 
 xcodebuild \
   -workspace macos/Runner.xcworkspace \

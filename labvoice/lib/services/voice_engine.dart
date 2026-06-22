@@ -1,9 +1,15 @@
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+
+import 'labvoice_api.dart';
+import 'language_manager.dart';
 
 class VoiceEngine {
   static final FlutterTts _tts = FlutterTts();
+  static final AudioPlayer _player = AudioPlayer();
   static bool _initialized = false;
   static String _activeLocale = "es-ES";
+  static int _speechGeneration = 0;
   static const Map<String, List<String>> _preferredVoices = {
     "es": ["Mónica", "Paulina", "Flo", "Sandy", "Reed"],
     "en": ["Samantha", "Ava", "Flo", "Sandy", "Reed"],
@@ -40,8 +46,27 @@ class VoiceEngine {
   static Future<void> speak(String text) async {
     if (text.trim().isEmpty) return;
     await initialize();
+    final generation = ++_speechGeneration;
+    await _player.stop();
     await _tts.stop();
-    await _tts.speak(text);
+
+    try {
+      final audio = await LabVoiceApi.speech(
+        text,
+        language: LanguageManager.effectiveLanguage,
+      );
+      if (generation != _speechGeneration) return;
+      await _player.play(BytesSource(audio));
+    } catch (_) {
+      if (generation != _speechGeneration) return;
+      await _tts.speak(text);
+    }
+  }
+
+  static Future<void> stop() async {
+    _speechGeneration++;
+    await _player.stop();
+    await _tts.stop();
   }
 
   static Future<void> setLanguage(String locale) async {

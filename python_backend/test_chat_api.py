@@ -44,3 +44,33 @@ class ChatApiTest(unittest.TestCase):
         system_content = create.call_args.kwargs["input"][0]["content"]
         self.assertIn("Respond in language code: es", system_content)
         self.assertIn("Current operational context", system_content)
+
+    @patch("main.client.audio.speech.create")
+    def test_speech_returns_natural_voice_audio(self, create):
+        create.return_value.content = b"RIFF-test-audio"
+
+        response = TestClient(app).post(
+            "/speech",
+            json={"text": "Hola Ian", "language": "es"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"], "audio/wav")
+        self.assertEqual(response.content, b"RIFF-test-audio")
+        self.assertEqual(create.call_args.kwargs["voice"], "marin")
+
+    @patch("main.client.audio.speech.create")
+    def test_speech_failure_does_not_expose_provider_details(self, create):
+        create.side_effect = RuntimeError("secret provider details")
+
+        response = TestClient(app).post(
+            "/speech",
+            json={"text": "Hello", "language": "en"},
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(
+            response.json()["detail"]["code"],
+            "speech_service_unavailable",
+        )
+        self.assertNotIn("secret provider details", response.text)

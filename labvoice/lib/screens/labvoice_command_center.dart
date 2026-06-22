@@ -3,6 +3,7 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 import '../controllers/labvoice_controller.dart';
 import '../services/language_manager.dart';
+import '../services/voice_engine.dart';
 
 class LabVoiceCommandCenter extends StatefulWidget {
   const LabVoiceCommandCenter({super.key});
@@ -39,6 +40,7 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
 
   Future<void> _listen() async {
     if (_controller.isListening) return;
+    await VoiceEngine.stop();
     final available = await _speech.initialize(
       onStatus: (status) {
         if (status == "done") _controller.setListening(false);
@@ -157,6 +159,13 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
         child: Column(
           children: [
             _card("LabVoice Response", _controller.response, Icons.assistant),
+            Text(
+              LanguageManager.isSpanish
+                  ? "Voz generada por IA"
+                  : "AI-generated voice",
+              style: Theme.of(context).textTheme.labelSmall,
+            ),
+            const SizedBox(height: 8),
             _languageSelector(),
             const SizedBox(height: 12),
             _card(

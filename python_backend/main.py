@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -44,6 +44,11 @@ class ConfirmationRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=10000)
+    language: str = Field(default="es", min_length=2, max_length=10)
+
+
+class SpeechRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
     language: str = Field(default="es", min_length=2, max_length=10)
 
 
@@ -268,3 +273,32 @@ def chat(request: ChatRequest):
         "success": True,
         "response": response.output_text,
     }
+
+
+@app.post("/speech")
+def speech(request: SpeechRequest):
+    language = "Spanish" if request.language == "es" else "English"
+    try:
+        audio = client.audio.speech.create(
+            model="gpt-4o-mini-tts",
+            voice="marin",
+            input=request.text,
+            instructions=(
+                f"Speak in {language}. Use a warm, calm, modern technological "
+                "voice. Sound natural and reassuring. Avoid theatrical, "
+                "ominous, robotic, exaggerated, or overly slow delivery."
+            ),
+            response_format="wav",
+        )
+    except Exception:
+        api_error(
+            502,
+            "speech_service_unavailable",
+            "The natural voice service is temporarily unavailable.",
+        )
+
+    return Response(
+        content=audio.content,
+        media_type="audio/wav",
+        headers={"Cache-Control": "no-store"},
+    )

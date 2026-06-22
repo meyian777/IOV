@@ -2,6 +2,31 @@ class IntentEngine {
   static String detectIntent(String command) {
     final text = command.toLowerCase().trim();
 
+    if (text == "detente" ||
+        text == "deténte" ||
+        text == "para" ||
+        text == "párate" ||
+        text == "silencio" ||
+        text == "cállate" ||
+        text == "callate" ||
+        text == "stop" ||
+        text == "stop speaking" ||
+        text == "be quiet") {
+      return "stop_speaking";
+    }
+
+    if (text.contains("resúmelo") ||
+        text.contains("resumelo") ||
+        text.contains("resume eso") ||
+        text.contains("respuesta corta") ||
+        text.contains("hazlo más corto") ||
+        text.contains("hazlo mas corto") ||
+        text.contains("summarize") ||
+        text.contains("shorter answer") ||
+        text.contains("make it shorter")) {
+      return "summarize_response";
+    }
+
     if (text == "confirmar" ||
         text == "confirmo" ||
         text == "sí" ||

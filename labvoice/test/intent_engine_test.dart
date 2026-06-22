@@ -18,4 +18,12 @@ void main() {
     expect(IntentEngine.detectIntent('cancel'), 'cancel_action');
     expect(IntentEngine.detectIntent('no'), 'cancel_action');
   });
+
+  test('detecta interrupción y resumen de voz', () {
+    expect(IntentEngine.detectIntent('detente'), 'stop_speaking');
+    expect(IntentEngine.detectIntent('silencio'), 'stop_speaking');
+    expect(IntentEngine.detectIntent('stop speaking'), 'stop_speaking');
+    expect(IntentEngine.detectIntent('resúmelo'), 'summarize_response');
+    expect(IntentEngine.detectIntent('make it shorter'), 'summarize_response');
+  });
 }

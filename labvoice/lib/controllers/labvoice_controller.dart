@@ -99,6 +99,14 @@ class LabVoiceController extends ChangeNotifier {
     final command = rawCommand.toLowerCase().trim();
     final intent = IntentEngine.detectIntent(command);
 
+    if (intent == "stop_speaking") {
+      await _stopSpeaking(rawCommand);
+      return;
+    }
+    if (intent == "summarize_response") {
+      await _summarizeResponse(rawCommand);
+      return;
+    }
     if (intent == "confirm_action") {
       await _confirmPendingAction(rawCommand);
       return;
@@ -150,6 +158,46 @@ class LabVoiceController extends ChangeNotifier {
       default:
         await _runChat(rawCommand, rawCommand);
         return;
+    }
+  }
+
+  Future<void> _stopSpeaking(String rawCommand) async {
+    await VoiceEngine.stop();
+    heardCommand = rawCommand;
+    response = LanguageManager.text("Voz detenida.", "Voice stopped.");
+    detectedIntent = "stop_speaking";
+    technicalAction = "Audio playback stopped.";
+    securityLevel = "Secure";
+    notifyListeners();
+  }
+
+  Future<void> _summarizeResponse(String rawCommand) async {
+    final previousResponse = response;
+    try {
+      final instruction = LanguageManager.isSpanish
+          ? "Resume en máximo dos frases esta respuesta, conservando solo lo "
+                "esencial:\n\n$previousResponse"
+          : "Summarize this response in at most two sentences, preserving only "
+                "the essential information:\n\n$previousResponse";
+      final result = await LabVoiceApi.chat(
+        instruction,
+        language: LanguageManager.effectiveLanguage,
+      );
+      await _update(
+        heard: rawCommand,
+        response: result["response"] ?? previousResponse,
+        intent: "summarize_response",
+        action: "Previous response summarized.",
+        security: "Secure",
+      );
+    } on LabVoiceApiException catch (error) {
+      await _update(
+        heard: rawCommand,
+        response: error.message,
+        intent: "backend_error",
+        action: error.code ?? "summary_failed",
+        security: "Blocked",
+      );
     }
   }
 

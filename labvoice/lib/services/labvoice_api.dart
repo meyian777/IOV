@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 
 class LabVoiceApiException implements Exception {
@@ -64,6 +65,36 @@ class LabVoiceApi {
       body: {"message": message, "language": language},
       timeout: const Duration(seconds: 60),
     );
+  }
+
+  static Future<Uint8List> speech(
+    String text, {
+    required String language,
+  }) async {
+    final uri = Uri.parse("$baseUrl/speech");
+    try {
+      final response = await http
+          .post(
+            uri,
+            headers: {"Content-Type": "application/json"},
+            body: jsonEncode({"text": text, "language": language}),
+          )
+          .timeout(const Duration(seconds: 60));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        _decodeResponse(response);
+      }
+      return response.bodyBytes;
+    } on TimeoutException {
+      throw const LabVoiceApiException(
+        "Natural voice generation timed out.",
+        code: "timeout",
+      );
+    } on http.ClientException {
+      throw const LabVoiceApiException(
+        "LabVoice backend is unavailable.",
+        code: "backend_unavailable",
+      );
+    }
   }
 
   static Future<Map<String, dynamic>> _request(
