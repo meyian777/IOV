@@ -131,6 +131,9 @@ class LabVoiceController extends ChangeNotifier {
     }
 
     switch (intent) {
+      case "creator_identity":
+        await _creatorIdentity(rawCommand);
+        return;
       case "inspect_project":
         await _inspectProject(rawCommand);
         return;
@@ -159,6 +162,16 @@ class LabVoiceController extends ChangeNotifier {
         await _runChat(rawCommand, rawCommand);
         return;
     }
+  }
+
+  Future<void> _creatorIdentity(String rawCommand) async {
+    await _update(
+      heard: rawCommand,
+      response: LanguageManager.creatorIdentity(),
+      intent: "creator_identity",
+      action: "Presented official LabVoice founder identity.",
+      security: "Public identity",
+    );
   }
 
   Future<void> _stopSpeaking(String rawCommand) async {

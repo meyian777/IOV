@@ -27,6 +27,22 @@ class IntentEngine {
       return "summarize_response";
     }
 
+    if (text.contains("quién te creó") ||
+        text.contains("quien te creo") ||
+        text.contains("quién es tu creador") ||
+        text.contains("quien es tu creador") ||
+        text.contains("quién es tu fundador") ||
+        text.contains("quien es tu fundador") ||
+        text.contains("quién creó labvoice") ||
+        text.contains("quien creo labvoice") ||
+        text.contains("who created you") ||
+        text.contains("who made you") ||
+        text.contains("who is your creator") ||
+        text.contains("who is your founder") ||
+        text.contains("who founded labvoice")) {
+      return "creator_identity";
+    }
+
     if (text == "confirmar" ||
         text == "confirmo" ||
         text == "sí" ||

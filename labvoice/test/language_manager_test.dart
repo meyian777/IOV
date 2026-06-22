@@ -23,6 +23,16 @@ void main() {
     expect(LanguageManager.languageUpdated(), contains('Language'));
   });
 
+  test('presents the founder identity in Spanish and English', () {
+    LanguageManager.setLanguage('es_ES');
+    expect(LanguageManager.creatorIdentity(), contains('Ian Mey'));
+    expect(LanguageManager.creatorIdentity(), contains('fundador'));
+
+    LanguageManager.setLanguage('en_US');
+    expect(LanguageManager.creatorIdentity(), contains('Ian Mey'));
+    expect(LanguageManager.creatorIdentity(), contains('founder'));
+  });
+
   test('automatic mode detects English and Spanish text', () {
     LanguageManager.setLanguage('auto');
 

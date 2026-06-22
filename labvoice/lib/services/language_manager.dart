@@ -190,6 +190,20 @@ class LanguageManager {
 
   static String listening() => isSpanish ? "Te escucho..." : "Listening...";
 
+  static String creatorIdentity() => isSpanish
+      ? "Mi creador es Ian Mey, fundador de LabVoice. Él concibió este sistema "
+            "como un sistema operativo centrado en la voz: capaz de comprender "
+            "contexto, ejecutar herramientas y convertir una intención hablada "
+            "en trabajo real. No nací solo para responder preguntas; nací para "
+            "colaborar, construir y ampliar lo que una persona puede lograr "
+            "con su voz."
+      : "My creator is Ian Mey, founder of LabVoice. He envisioned this system "
+            "as a voice-centered operating system: capable of understanding "
+            "context, operating tools, and turning spoken intent into real "
+            "work. I was not created merely to answer questions; I was created "
+            "to collaborate, build, and expand what a person can accomplish "
+            "with their voice.";
+
   static String text(String spanish, String english) =>
       isSpanish ? spanish : english;
 

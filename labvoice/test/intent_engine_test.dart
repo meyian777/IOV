@@ -26,4 +26,17 @@ void main() {
     expect(IntentEngine.detectIntent('resúmelo'), 'summarize_response');
     expect(IntentEngine.detectIntent('make it shorter'), 'summarize_response');
   });
+
+  test('detecta preguntas bilingües sobre el creador', () {
+    expect(IntentEngine.detectIntent('¿Quién te creó?'), 'creator_identity');
+    expect(
+      IntentEngine.detectIntent('¿Quién es tu fundador?'),
+      'creator_identity',
+    );
+    expect(IntentEngine.detectIntent('Who created you?'), 'creator_identity');
+    expect(
+      IntentEngine.detectIntent('Who founded LabVoice?'),
+      'creator_identity',
+    );
+  });
 }
