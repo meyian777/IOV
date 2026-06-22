@@ -68,7 +68,31 @@ class LabVoiceController extends ChangeNotifier {
 
   void setListening(bool value) {
     isListening = value;
-    if (value) response = LanguageManager.listening();
+    if (value) {
+      response = LanguageManager.listening();
+      heardCommand = LanguageManager.text(
+        "Escuchando el micrófono...",
+        "Listening to the microphone...",
+      );
+      detectedIntent = "listening";
+      technicalAction = "Speech recognition is active.";
+    }
+    notifyListeners();
+  }
+
+  Future<void> speechRecognitionError(String error) async {
+    isListening = false;
+    heardCommand = LanguageManager.text(
+      "No se recibió ningún comando.",
+      "No command was received.",
+    );
+    response = LanguageManager.text(
+      "El reconocimiento de voz falló: $error",
+      "Speech recognition failed: $error",
+    );
+    detectedIntent = "speech_recognition_error";
+    technicalAction = error;
+    securityLevel = "Blocked";
     notifyListeners();
   }
 

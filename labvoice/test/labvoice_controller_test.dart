@@ -2,6 +2,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:labvoice/controllers/labvoice_controller.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   test('controller owns observable command center state', () {
     final controller = LabVoiceController();
     var notifications = 0;
@@ -10,7 +12,7 @@ void main() {
     controller.updatePartialTranscript('abre el proyecto');
     controller.setListening(true);
 
-    expect(controller.heardCommand, 'abre el proyecto');
+    expect(controller.heardCommand, 'Escuchando el micrófono...');
     expect(controller.isListening, isTrue);
     expect(notifications, 2);
   });
@@ -22,5 +24,15 @@ void main() {
     expect(controller.activeLanguageName, 'Español');
     expect(controller.languages['English'], 'en_US');
     expect(controller.languages['Español'], 'es_ES');
+  });
+
+  test('controller exposes speech recognition failures', () async {
+    final controller = LabVoiceController();
+
+    await controller.speechRecognitionError('error_audio');
+
+    expect(controller.isListening, isFalse);
+    expect(controller.detectedIntent, 'speech_recognition_error');
+    expect(controller.technicalAction, 'error_audio');
   });
 }

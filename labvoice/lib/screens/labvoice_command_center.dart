@@ -16,13 +16,13 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
   final LabVoiceController _controller = LabVoiceController();
   final TextEditingController _commandController = TextEditingController();
   final stt.SpeechToText _speech = stt.SpeechToText();
+  bool _speechInitialized = false;
 
   @override
   void initState() {
     super.initState();
     _controller.addListener(_refresh);
     _controller.initialize();
-    _speech.initialize();
   }
 
   void _refresh() {
@@ -41,35 +41,77 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter> {
   Future<void> _listen() async {
     if (_controller.isListening) return;
     await VoiceEngine.stop();
-    final available = await _speech.initialize(
-      onStatus: (status) {
-        if (status == "done") _controller.setListening(false);
-      },
-      onError: (_) => _controller.setListening(false),
-    );
+    await Future<void>.delayed(const Duration(milliseconds: 150));
+
+    final available = _speechInitialized
+        ? _speech.isAvailable
+        : await _initializeSpeech();
     if (!available) {
       await _controller.microphoneUnavailable();
       return;
     }
 
+    final localeId = await _supportedLocale(
+      LanguageManager.activeRecognitionLocale,
+    );
     _controller.setListening(true);
-    await _speech.listen(
-      listenOptions: stt.SpeechListenOptions(
-        localeId: LanguageManager.activeRecognitionLocale,
-        listenFor: const Duration(minutes: 10),
-        pauseFor: const Duration(seconds: 2),
-      ),
-      onResult: (result) async {
-        if (!result.finalResult) {
-          _controller.updatePartialTranscript(result.recognizedWords);
-          return;
+    try {
+      await _speech.listen(
+        listenOptions: stt.SpeechListenOptions(
+          localeId: localeId,
+          listenFor: const Duration(minutes: 10),
+          pauseFor: const Duration(seconds: 3),
+          cancelOnError: true,
+          partialResults: true,
+          listenMode: stt.ListenMode.dictation,
+          sampleRate: 44100,
+        ),
+        onResult: (result) async {
+          if (!result.finalResult) {
+            _controller.updatePartialTranscript(result.recognizedWords);
+            return;
+          }
+          final command = result.recognizedWords.trim();
+          await _speech.stop();
+          _controller.setListening(false);
+          if (command.isNotEmpty) await _controller.processCommand(command);
+        },
+      );
+      if (!_speech.isListening && !_speech.hasRecognized) {
+        final error = _speech.lastError?.errorMsg ?? "listen_not_started";
+        await _controller.speechRecognitionError(error);
+      }
+    } catch (error) {
+      await _controller.speechRecognitionError(error.toString());
+    }
+  }
+
+  Future<bool> _initializeSpeech() async {
+    final available = await _speech.initialize(
+      debugLogging: true,
+      onStatus: (status) {
+        if (status == "done" || status == "notListening") {
+          _controller.setListening(false);
         }
-        final command = result.recognizedWords.trim();
-        await _speech.stop();
-        _controller.setListening(false);
-        if (command.isNotEmpty) await _controller.processCommand(command);
+      },
+      onError: (error) {
+        _controller.speechRecognitionError(error.errorMsg);
       },
     );
+    _speechInitialized = available;
+    return available;
+  }
+
+  Future<String?> _supportedLocale(String? preferredLocale) async {
+    if (preferredLocale == null) return null;
+    final locales = await _speech.locales();
+    final normalizedPreferred = preferredLocale.replaceAll("-", "_");
+    for (final locale in locales) {
+      if (locale.localeId.replaceAll("-", "_") == normalizedPreferred) {
+        return locale.localeId;
+      }
+    }
+    return null;
   }
 
   void _sendTypedCommand() {
