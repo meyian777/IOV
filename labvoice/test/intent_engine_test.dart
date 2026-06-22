@@ -39,4 +39,12 @@ void main() {
       'creator_identity',
     );
   });
+
+  test('detecta preguntas bilingües sobre la biografía pública', () {
+    expect(
+      IntentEngine.detectIntent('Biografía de Ian Faber Mendoza Mey'),
+      'founder_biography',
+    );
+    expect(IntentEngine.detectIntent('Founder biography'), 'founder_biography');
+  });
 }

@@ -57,7 +57,11 @@ class ChatApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers["content-type"], "audio/wav")
         self.assertEqual(response.content, b"RIFF-test-audio")
-        self.assertEqual(create.call_args.kwargs["voice"], "marin")
+        self.assertEqual(create.call_args.kwargs["voice"], "cedar")
+        self.assertIn(
+            "Latin American Spanish",
+            create.call_args.kwargs["instructions"],
+        )
 
     @patch("main.client.audio.speech.create")
     def test_speech_failure_does_not_expose_provider_details(self, create):

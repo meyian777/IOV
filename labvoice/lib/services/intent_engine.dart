@@ -43,6 +43,19 @@ class IntentEngine {
       return "creator_identity";
     }
 
+    if (text.contains("biografía de ian") ||
+        text.contains("biografia de ian") ||
+        text.contains("biografía del fundador") ||
+        text.contains("biografia del fundador") ||
+        text.contains("quién es ian faber") ||
+        text.contains("quien es ian faber") ||
+        text.contains("ian faber mendoza mey") ||
+        text.contains("biography of ian") ||
+        text.contains("founder biography") ||
+        text.contains("who is ian faber")) {
+      return "founder_biography";
+    }
+
     if (text == "confirmar" ||
         text == "confirmo" ||
         text == "sí" ||

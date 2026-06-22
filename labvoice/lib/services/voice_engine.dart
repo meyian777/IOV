@@ -58,8 +58,9 @@ class VoiceEngine {
       if (generation != _speechGeneration) return;
       await _player.play(BytesSource(audio));
     } catch (_) {
-      if (generation != _speechGeneration) return;
-      await _tts.speak(text);
+      // Never fall back to the robotic system voice. Silence is safer and
+      // more consistent with the LabVoice experience.
+      return;
     }
   }
 

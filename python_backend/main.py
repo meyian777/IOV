@@ -8,6 +8,7 @@ import os
 
 from action_engine import ActionEngine
 from diagnostics_runner import DiagnosticsRunner
+from founder_profile_store import FounderProfileStore
 from permission_engine import PermissionEngine
 from project_inspector import ProjectInspector
 from session_store import SessionStore
@@ -71,6 +72,29 @@ SESSION_DATABASE_PATH = os.getenv(
 )
 session_store = SessionStore(SESSION_DATABASE_PATH)
 permission_engine = PermissionEngine()
+
+DEFAULT_PUBLIC_FOUNDER_BIOGRAPHY = (
+    "Ian Faber Mendoza Mey is the founder and creator of LabVoice. Born in "
+    "Sincelejo, Colombia, he built his path through discipline, continuous "
+    "learning, travel, and migration to the United States. He created LabVoice "
+    "as a voice-centered operating system designed to transform spoken intent "
+    "into real action and make technology more accessible, especially for "
+    "people with visual disabilities."
+)
+
+
+def public_founder_biography() -> str:
+    key = os.getenv("LABVOICE_FOUNDER_PROFILE_KEY")
+    if not key:
+        return DEFAULT_PUBLIC_FOUNDER_BIOGRAPHY
+    try:
+        profile = FounderProfileStore(
+            os.path.join(BACKEND_DIR, "data", "founder_profile.enc"),
+            key,
+        ).load()
+        return profile["public_biography"]
+    except (FileNotFoundError, KeyError, ValueError):
+        return DEFAULT_PUBLIC_FOUNDER_BIOGRAPHY
 
 
 def api_error(status_code: int, code: str, message: str):
@@ -221,9 +245,10 @@ and organizations.
 
 You are not a generic chatbot.
 
-Your creator and founder is Ian Mey.
-LabVoice was conceived by Ian Mey as a voice-centered operating system that
-understands context, operates tools, and transforms spoken intent into real work.
+Your creator and founder is Ian Faber Mendoza Mey.
+LabVoice was conceived by Ian Faber Mendoza Mey as a voice-centered operating
+system that understands context, operates tools, and transforms spoken intent
+into real work.
 Never attribute the creation or founding of LabVoice to anyone else.
 
 You can reason,
@@ -257,6 +282,8 @@ def chat(request: ChatRequest):
                     "role": "system",
                     "content": (
                         f"{SYSTEM_PROMPT}\n"
+                        f"Official public founder biography: "
+                        f"{public_founder_biography()}\n"
                         f"Respond in language code: {request.language}.\n"
                         f"Current operational context: {context}"
                     ),
@@ -282,18 +309,30 @@ def chat(request: ChatRequest):
 
 @app.post("/speech")
 def speech(request: SpeechRequest):
-    language = "Spanish" if request.language == "es" else "English"
+    instructions = (
+        "Speak in natural Latin American Spanish. Sound like a warm, "
+        "intelligent technology partner having a real conversation nearby. "
+        "Use fluid pacing, subtle emotion, natural pauses, and varied "
+        "intonation. Keep the delivery clear and confident without sounding "
+        "like an announcer. Never sound robotic, synthetic, ominous, "
+        "theatrical, overly slow, or exaggerated."
+        if request.language == "es"
+        else
+        "Speak in natural American English. Sound like a warm, intelligent "
+        "technology partner having a real conversation nearby. Use fluid "
+        "pacing, subtle emotion, natural pauses, and varied intonation. Keep "
+        "the delivery clear and confident without sounding like an announcer. "
+        "Never sound robotic, synthetic, ominous, theatrical, overly slow, "
+        "or exaggerated."
+    )
     try:
         audio = client.audio.speech.create(
             model="gpt-4o-mini-tts",
-            voice="marin",
+            voice="cedar",
             input=request.text,
-            instructions=(
-                f"Speak in {language}. Use a warm, calm, modern technological "
-                "voice. Sound natural and reassuring. Avoid theatrical, "
-                "ominous, robotic, exaggerated, or overly slow delivery."
-            ),
+            instructions=instructions,
             response_format="wav",
+            speed=1.04,
         )
     except Exception:
         api_error(

@@ -5,6 +5,7 @@
 !**/.env.example
 *.pem
 *.key
+*.enc
 
 # Python
 **/venv/

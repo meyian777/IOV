@@ -158,6 +158,9 @@ class LabVoiceController extends ChangeNotifier {
       case "creator_identity":
         await _creatorIdentity(rawCommand);
         return;
+      case "founder_biography":
+        await _founderBiography(rawCommand);
+        return;
       case "inspect_project":
         await _inspectProject(rawCommand);
         return;
@@ -194,6 +197,16 @@ class LabVoiceController extends ChangeNotifier {
       response: LanguageManager.creatorIdentity(),
       intent: "creator_identity",
       action: "Presented official LabVoice founder identity.",
+      security: "Public identity",
+    );
+  }
+
+  Future<void> _founderBiography(String rawCommand) async {
+    await _update(
+      heard: rawCommand,
+      response: LanguageManager.founderBiography(),
+      intent: "founder_biography",
+      action: "Presented approved public founder biography.",
       security: "Public identity",
     );
   }
