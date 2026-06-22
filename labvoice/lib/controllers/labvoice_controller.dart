@@ -374,11 +374,18 @@ class LabVoiceController extends ChangeNotifier {
         message,
         language: LanguageManager.effectiveLanguage,
       );
+      final routing = result["routing"] as Map<String, dynamic>?;
+      final domain = routing?["domain"]?.toString();
+      final capability = routing?["capability"]?.toString();
+      final codeLanguage = routing?["language"]?.toString();
+      final action = domain == "software_engineering"
+          ? "Code agent · $capability · $codeLanguage"
+          : "AI conversation";
       await _update(
         heard: rawCommand,
         response: result["response"] ?? "I could not produce a response.",
         intent: "chat",
-        action: "AI conversation",
+        action: action,
         security: "Secure",
       );
     } on LabVoiceApiException catch (error) {

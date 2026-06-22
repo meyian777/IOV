@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 import os
 
 from action_engine import ActionEngine
+from code_capability_router import CodeCapabilityRouter
 from diagnostics_runner import DiagnosticsRunner
 from founder_profile_store import FounderProfileStore
 from permission_engine import PermissionEngine
@@ -51,6 +52,10 @@ class ChatRequest(BaseModel):
 class SpeechRequest(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
     language: str = Field(default="es", min_length=2, max_length=10)
+
+
+class CodeRouteRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=10000)
 
 
 class SessionUpdate(BaseModel):
@@ -284,6 +289,7 @@ Avoid sounding corporate, theatrical, or overly enthusiastic.
 @app.post("/chat")
 def chat(request: ChatRequest):
     session = session_store.get()
+    code_route = CodeCapabilityRouter.route(request.message, PROJECT_PATH)
     context = (
         f"Active project: {session['active_project']}. "
         f"Current goal: {session['current_goal']}. "
@@ -323,6 +329,8 @@ def chat(request: ChatRequest):
                     "content": (
                         f"{SYSTEM_PROMPT}\n"
                         f"{founder_context}"
+                        f"Capability routing: "
+                        f"{CodeCapabilityRouter.prompt_context(code_route)}\n"
                         f"Respond in language code: {request.language}.\n"
                         f"Current operational context: {context}"
                     ),
@@ -343,6 +351,16 @@ def chat(request: ChatRequest):
     return {
         "success": True,
         "response": response.output_text,
+        "routing": code_route.to_dict(),
+    }
+
+
+@app.post("/code/route")
+def route_code_capability(request: CodeRouteRequest):
+    route = CodeCapabilityRouter.route(request.message, PROJECT_PATH)
+    return {
+        "success": True,
+        "routing": route.to_dict(),
     }
 
 

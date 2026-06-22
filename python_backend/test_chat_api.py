@@ -44,6 +44,20 @@ class ChatApiTest(unittest.TestCase):
         system_content = create.call_args.kwargs["input"][0]["content"]
         self.assertIn("Respond in language code: es", system_content)
         self.assertIn("Current operational context", system_content)
+        self.assertIn("Capability routing", system_content)
+        self.assertIn("routing", response.json())
+
+    def test_code_route_endpoint_exposes_specialized_capability(self):
+        response = TestClient(app).post(
+            "/code/route",
+            json={"message": "Depura este error de Flutter"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        routing = response.json()["routing"]
+        self.assertEqual(routing["domain"], "software_engineering")
+        self.assertEqual(routing["capability"], "debug")
+        self.assertEqual(routing["language"], "dart")
 
     @patch("main.client.audio.speech.create")
     def test_speech_returns_natural_voice_audio(self, create):
