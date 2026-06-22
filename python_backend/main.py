@@ -73,28 +73,41 @@ SESSION_DATABASE_PATH = os.getenv(
 session_store = SessionStore(SESSION_DATABASE_PATH)
 permission_engine = PermissionEngine()
 
-DEFAULT_PUBLIC_FOUNDER_BIOGRAPHY = (
-    "Ian Faber Mendoza Mey is the founder and creator of LabVoice. Born in "
-    "Sincelejo, Colombia, he built his path through discipline, continuous "
-    "learning, travel, and migration to the United States. He created LabVoice "
-    "as a voice-centered operating system designed to transform spoken intent "
-    "into real action and make technology more accessible, especially for "
-    "people with visual disabilities."
-)
+DEFAULT_PUBLIC_FOUNDER_BIOGRAPHIES = {
+    "es": (
+        "Ian Faber Mendoza Mey es el fundador y creador de LabVoice. Nacido en "
+        "Sincelejo, Colombia, construyó su trayectoria mediante la disciplina, "
+        "el aprendizaje continuo, los viajes y la migración a Estados Unidos. "
+        "Creó LabVoice como un sistema operativo centrado en la voz, diseñado "
+        "para transformar intención hablada en acciones reales y hacer la "
+        "tecnología más accesible, especialmente para personas con discapacidad "
+        "visual."
+    ),
+    "en": (
+        "Ian Faber Mendoza Mey is the founder and creator of LabVoice. Born in "
+        "Sincelejo, Colombia, he built his journey through discipline, "
+        "continuous learning, travel, and migration to the United States. He "
+        "created LabVoice as a voice-centered operating system designed to "
+        "transform spoken intent into real action and make technology more "
+        "accessible, especially for people with visual disabilities."
+    ),
+}
 
 
-def public_founder_biography() -> str:
+def public_founder_biography(language: str) -> str:
+    biography_language = "es" if language == "es" else "en"
+    fallback = DEFAULT_PUBLIC_FOUNDER_BIOGRAPHIES[biography_language]
     key = os.getenv("LABVOICE_FOUNDER_PROFILE_KEY")
     if not key:
-        return DEFAULT_PUBLIC_FOUNDER_BIOGRAPHY
+        return fallback
     try:
         profile = FounderProfileStore(
             os.path.join(BACKEND_DIR, "data", "founder_profile.enc"),
             key,
         ).load()
-        return profile["public_biography"]
+        return profile[f"public_biography_{biography_language}"]
     except (FileNotFoundError, KeyError, ValueError):
-        return DEFAULT_PUBLIC_FOUNDER_BIOGRAPHY
+        return fallback
 
 
 def api_error(status_code: int, code: str, message: str):
@@ -258,6 +271,10 @@ automate,
 and orchestrate tools.
 
 Always identify yourself as LabVoice.
+If asked "who are you" or its equivalent, describe LabVoice itself: its
+voice-first purpose, capabilities, and mission. Do not answer with the founder's
+biography. Mention the founder or founder biography only when the user asks
+explicitly about the creator, founder, Ian, or his biography.
 
 Keep responses concise, practical, and action-oriented.
 Your voice should feel technologically capable, calm, warm, and confident.
@@ -274,6 +291,29 @@ def chat(request: ChatRequest):
         f"Last action: {session['last_action']}. "
         f"Next action: {session['next_action']}."
     )
+    normalized_message = request.message.lower()
+    founder_context = ""
+    if any(
+        marker in normalized_message
+        for marker in (
+            "fundador",
+            "fundadora",
+            "creador",
+            "creó labvoice",
+            "ian faber",
+            "biografía",
+            "biografia",
+            "founder",
+            "creator",
+            "created labvoice",
+            "biography",
+        )
+    ):
+        founder_context = (
+            f"Official public founder biography: "
+            f"{public_founder_biography(request.language)}\n"
+        )
+
     try:
         response = client.responses.create(
             model="gpt-5",
@@ -282,8 +322,7 @@ def chat(request: ChatRequest):
                     "role": "system",
                     "content": (
                         f"{SYSTEM_PROMPT}\n"
-                        f"Official public founder biography: "
-                        f"{public_founder_biography()}\n"
+                        f"{founder_context}"
                         f"Respond in language code: {request.language}.\n"
                         f"Current operational context: {context}"
                     ),
@@ -331,7 +370,7 @@ def speech(request: SpeechRequest):
             voice="cedar",
             input=request.text,
             instructions=instructions,
-            response_format="wav",
+            response_format="mp3",
             speed=1.04,
         )
     except Exception:
@@ -343,6 +382,6 @@ def speech(request: SpeechRequest):
 
     return Response(
         content=audio.content,
-        media_type="audio/wav",
+        media_type="audio/mpeg",
         headers={"Cache-Control": "no-store"},
     )

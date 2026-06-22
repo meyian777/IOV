@@ -1,7 +1,6 @@
 import 'dart:io';
 
 import 'package:audioplayers/audioplayers.dart';
-import 'package:path_provider/path_provider.dart';
 
 import 'labvoice_api.dart';
 import 'language_manager.dart';
@@ -11,8 +10,8 @@ class VoiceEngine {
   static int _speechGeneration = 0;
   static File? _activeAudioFile;
 
-  static Future<void> speak(String text) async {
-    if (text.trim().isEmpty) return;
+  static Future<String?> speak(String text) async {
+    if (text.trim().isEmpty) return null;
 
     final generation = ++_speechGeneration;
     await _player.stop();
@@ -23,24 +22,28 @@ class VoiceEngine {
         text,
         language: LanguageManager.effectiveLanguage,
       );
-      if (generation != _speechGeneration) return;
+      if (generation != _speechGeneration) return null;
 
-      final temporaryDirectory = await getTemporaryDirectory();
+      final temporaryDirectory = Directory.systemTemp;
       final audioFile = File(
-        "${temporaryDirectory.path}/labvoice-$generation.wav",
+        "${temporaryDirectory.path}/labvoice-$generation.mp3",
       );
       await audioFile.writeAsBytes(audio, flush: true);
       if (generation != _speechGeneration) {
         await audioFile.delete();
-        return;
+        return null;
       }
 
       _activeAudioFile = audioFile;
+      await _player.setReleaseMode(ReleaseMode.stop);
       await _player.setVolume(1.0);
-      await _player.play(DeviceFileSource(audioFile.path));
-    } catch (_) {
+      await _player.play(
+        DeviceFileSource(audioFile.path, mimeType: "audio/mpeg"),
+      );
+      return null;
+    } catch (error) {
       // LabVoice never falls back to a robotic system voice.
-      return;
+      return error.toString();
     }
   }
 

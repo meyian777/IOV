@@ -27,6 +27,18 @@ class IntentEngine {
       return "summarize_response";
     }
 
+    if (text.contains("quién eres") ||
+        text.contains("quien eres") ||
+        text.contains("qué eres") ||
+        text.contains("que eres") ||
+        text.contains("háblame de ti") ||
+        text.contains("hablame de ti") ||
+        text.contains("who are you") ||
+        text.contains("what are you") ||
+        text.contains("tell me about yourself")) {
+      return "labvoice_identity";
+    }
+
     if (text.contains("quién te creó") ||
         text.contains("quien te creo") ||
         text.contains("quién es tu creador") ||

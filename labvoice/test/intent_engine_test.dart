@@ -40,6 +40,11 @@ void main() {
     );
   });
 
+  test('distingue la identidad de LabVoice de la del fundador', () {
+    expect(IntentEngine.detectIntent('¿Quién eres?'), 'labvoice_identity');
+    expect(IntentEngine.detectIntent('Who are you?'), 'labvoice_identity');
+  });
+
   test('detecta preguntas bilingües sobre la biografía pública', () {
     expect(
       IntentEngine.detectIntent('Biografía de Ian Faber Mendoza Mey'),

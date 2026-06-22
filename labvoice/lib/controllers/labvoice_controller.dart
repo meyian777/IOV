@@ -155,6 +155,9 @@ class LabVoiceController extends ChangeNotifier {
     }
 
     switch (intent) {
+      case "labvoice_identity":
+        await _labVoiceIdentity(rawCommand);
+        return;
       case "creator_identity":
         await _creatorIdentity(rawCommand);
         return;
@@ -197,6 +200,16 @@ class LabVoiceController extends ChangeNotifier {
       response: LanguageManager.creatorIdentity(),
       intent: "creator_identity",
       action: "Presented official LabVoice founder identity.",
+      security: "Public identity",
+    );
+  }
+
+  Future<void> _labVoiceIdentity(String rawCommand) async {
+    await _update(
+      heard: rawCommand,
+      response: LanguageManager.labVoiceIdentity(),
+      intent: "labvoice_identity",
+      action: "Presented LabVoice system identity.",
       security: "Public identity",
     );
   }
@@ -530,6 +543,13 @@ class LabVoiceController extends ChangeNotifier {
     technicalAction = action;
     securityLevel = security;
     notifyListeners();
-    unawaited(VoiceEngine.speak(response));
+    unawaited(_speakResponse(response));
+  }
+
+  Future<void> _speakResponse(String text) async {
+    final error = await VoiceEngine.speak(text);
+    if (error == null) return;
+    technicalAction = "Voice playback failed: $error";
+    notifyListeners();
   }
 }

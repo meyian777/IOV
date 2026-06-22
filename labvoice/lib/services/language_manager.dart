@@ -204,6 +204,14 @@ class LanguageManager {
             "was created to collaborate, build, and expand what a person can "
             "accomplish with their voice.";
 
+  static String labVoiceIdentity() => isSpanish
+      ? "Soy LabVoice, un sistema operativo centrado en la voz. Comprendo "
+            "contexto, colaboro contigo y convierto instrucciones habladas en "
+            "acciones reales mediante herramientas seguras."
+      : "I am LabVoice, a voice-centered operating system. I understand "
+            "context, collaborate with you, and turn spoken instructions into "
+            "real actions through secure tools.";
+
   static String founderBiography() => isSpanish
       ? "Ian Faber Mendoza Mey es el fundador y creador de LabVoice. Nacido en "
             "Sincelejo, Colombia, construyó su trayectoria entre la disciplina, "

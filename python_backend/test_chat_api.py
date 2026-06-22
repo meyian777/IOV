@@ -47,7 +47,7 @@ class ChatApiTest(unittest.TestCase):
 
     @patch("main.client.audio.speech.create")
     def test_speech_returns_natural_voice_audio(self, create):
-        create.return_value.content = b"RIFF-test-audio"
+        create.return_value.content = b"ID3-test-audio"
 
         response = TestClient(app).post(
             "/speech",
@@ -55,8 +55,8 @@ class ChatApiTest(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.headers["content-type"], "audio/wav")
-        self.assertEqual(response.content, b"RIFF-test-audio")
+        self.assertEqual(response.headers["content-type"], "audio/mpeg")
+        self.assertEqual(response.content, b"ID3-test-audio")
         self.assertEqual(create.call_args.kwargs["voice"], "cedar")
         self.assertIn(
             "Latin American Spanish",
