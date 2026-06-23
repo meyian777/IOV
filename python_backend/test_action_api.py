@@ -3,10 +3,25 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from main import app
+from main import app, audit_store
 
 
 class ActionApiTest(unittest.TestCase):
+    def test_core_health_and_audit_endpoints_are_available(self):
+        client = TestClient(app)
+
+        health = client.get("/core/health")
+        verification = client.get("/core/audit/verify")
+        capabilities = client.get("/core/capabilities")
+
+        self.assertEqual(health.status_code, 200)
+        self.assertIn(health.json()["status"], {"ready", "degraded"})
+        self.assertTrue(verification.json()["verification"]["valid"])
+        self.assertTrue(
+            capabilities.json()["capabilities"]["tamper_evident_audit"]
+        )
+        self.assertTrue(audit_store.verify()["valid"])
+
     @patch("main.ActionEngine.execute")
     def test_sensitive_action_cannot_execute_without_confirmation(self, execute):
         client = TestClient(app)

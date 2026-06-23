@@ -9,9 +9,11 @@ import os
 from pathlib import Path
 
 from action_engine import ActionEngine
+from audit_store import AuditStore
 from code_edit_planner import CodeEditPlanner
 from code_capability_router import CodeCapabilityRouter
 from conversation_store import ConversationStore
+from core_health import CoreHealth
 from diagnostics_runner import DiagnosticsRunner
 from editor_context_store import EditorContextStore
 from editor_operation_store import EditorOperationStore
@@ -19,6 +21,7 @@ from founder_profile_store import FounderProfileStore
 from permission_engine import PermissionEngine
 from project_inspector import ProjectInspector
 from session_store import SessionStore
+from speaker_identity import SpeakerIdentityService
 from staged_edit_validator import StagedEditValidator
 
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -106,11 +109,22 @@ SESSION_DATABASE_PATH = os.getenv(
     "LABVOICE_SESSION_DATABASE",
     os.path.join(os.path.dirname(__file__), "data", "labvoice.db"),
 )
+AUDIT_DATABASE_PATH = os.getenv(
+    "LABVOICE_AUDIT_DATABASE",
+    os.path.join(os.path.dirname(__file__), "data", "audit.db"),
+)
 session_store = SessionStore(SESSION_DATABASE_PATH)
+audit_store = AuditStore(AUDIT_DATABASE_PATH)
 permission_engine = PermissionEngine()
 editor_context_store = EditorContextStore()
 editor_operation_store = EditorOperationStore()
 conversation_store = ConversationStore()
+speaker_identity_service = SpeakerIdentityService()
+audit_store.append(
+    "core.started",
+    "success",
+    {"version": app.version},
+)
 
 DEFAULT_PUBLIC_FOUNDER_BIOGRAPHIES = {
     "es": (
@@ -178,25 +192,92 @@ def root():
     }
 
 
+@app.get("/core/health")
+def core_health():
+    return CoreHealth.inspect(
+        PROJECT_PATH,
+        SESSION_DATABASE_PATH,
+        editor_context_store.get(),
+        audit_store.verify(),
+        speaker_identity_service.status(),
+    )
+
+
+@app.get("/core/capabilities")
+def core_capabilities():
+    return {
+        "success": True,
+        "capabilities": {
+            "conversation_memory": True,
+            "continuous_listening": True,
+            "editor_bridge": editor_context_store.get()["connected"],
+            "safe_code_editing": True,
+            "tamper_evident_audit": True,
+            "speaker_identity": speaker_identity_service.status(),
+            "ml_framework_boundary": {
+                "tensorflow": "provider_ready_not_installed",
+                "pytorch": "provider_ready_not_installed",
+            },
+        },
+    }
+
+
+@app.get("/core/audit/verify")
+def verify_audit_chain():
+    return {
+        "success": True,
+        "verification": audit_store.verify(),
+    }
+
+
+@app.get("/speaker/status")
+def speaker_identity_status():
+    return {
+        "success": True,
+        "speaker_identity": speaker_identity_service.status(),
+    }
+
+
 @app.post("/execute")
 def execute_action(request: ActionRequest):
     prepared = permission_engine.prepare(request.action)
     if not prepared.get("success"):
+        audit_store.append(
+            "action.requested",
+            "rejected",
+            {"action": request.action, "reason": "unknown_action"},
+        )
         api_error(
             404,
             prepared.get("error", "unknown_action"),
             prepared.get("message", "Unknown action."),
         )
     if not prepared.get("approved"):
+        audit_store.append(
+            "action.requested",
+            "confirmation_required",
+            {"action": request.action, "risk": prepared["policy"]["risk"]},
+        )
         return prepared
 
-    return action_result(ActionEngine.execute(request.action, PROJECT_PATH))
+    result = ActionEngine.execute(request.action, PROJECT_PATH)
+    audit_store.append(
+        "action.executed",
+        "success" if result.get("success") else "failed",
+        {"action": request.action},
+    )
+    return action_result(result)
 
 
 @app.post("/execute/confirm")
 def confirm_action(request: ConfirmationRequest):
     confirmed = permission_engine.confirm(request.confirmation_token)
     if not confirmed.get("approved"):
+        audit_store.append(
+            "action.confirmation",
+            "rejected",
+            {"reason": confirmed.get("error", "confirmation_failed")},
+        )
         status_code = (
             410
             if confirmed.get("error") == "expired_confirmation"
@@ -208,9 +289,13 @@ def confirm_action(request: ConfirmationRequest):
             confirmed.get("message", "The action could not be confirmed."),
         )
 
-    return action_result(
-        ActionEngine.execute(confirmed["action"], PROJECT_PATH)
+    result = ActionEngine.execute(confirmed["action"], PROJECT_PATH)
+    audit_store.append(
+        "action.confirmed_and_executed",
+        "success" if result.get("success") else "failed",
+        {"action": confirmed["action"]},
     )
+    return action_result(result)
 
 
 @app.post("/execute/cancel")
@@ -218,6 +303,11 @@ def cancel_action(request: ConfirmationRequest):
     result = permission_engine.cancel(request.confirmation_token)
     if not result["success"]:
         api_error(404, "pending_action_not_found", result["message"])
+    audit_store.append(
+        "action.canceled",
+        "success",
+        {},
+    )
     return result
 
 
@@ -369,6 +459,15 @@ def prepare_editor_edit(request: EditorEditRequest):
         summary=plan["summary"],
         diff=diff,
     )
+    audit_store.append(
+        "editor.edit.prepared",
+        "preview_required",
+        {
+            "operation_id": operation["id"],
+            "relative_file": operation["relative_file"],
+            "language_id": operation["language_id"],
+        },
+    )
     return {
         "success": True,
         "operation_id": operation["id"],
@@ -413,6 +512,14 @@ def update_editor_operation(
     )
     if operation is None:
         api_error(404, "edit_not_found", "The edit operation was not found.")
+    audit_store.append(
+        "editor.edit.status",
+        request.status,
+        {
+            "operation_id": operation_id,
+            "relative_file": operation["relative_file"],
+        },
+    )
     return {"success": True, "operation": operation}
 
 
@@ -428,6 +535,14 @@ def confirm_editor_edit(operation_id: str):
             "Review the exact change in VS Code before applying it.",
         )
     operation = editor_operation_store.update(operation_id, "approved")
+    audit_store.append(
+        "editor.edit.approved",
+        "success",
+        {
+            "operation_id": operation_id,
+            "relative_file": operation["relative_file"],
+        },
+    )
     return {
         "success": True,
         "status": operation["status"],
@@ -465,6 +580,14 @@ def cancel_editor_edit(operation_id: str):
     if operation["status"] not in {"awaiting_preview", "previewed"}:
         api_error(409, "edit_not_cancelable", "This edit cannot be canceled.")
     editor_operation_store.update(operation_id, "canceled")
+    audit_store.append(
+        "editor.edit.canceled",
+        "success",
+        {
+            "operation_id": operation_id,
+            "relative_file": operation["relative_file"],
+        },
+    )
     return {"success": True, "message": "The proposed edit was canceled."}
 
 
@@ -476,6 +599,16 @@ def validate_editor_edit(operation_id: str):
     if operation["status"] != "approved":
         api_error(409, "edit_not_approved", "The edit has not been approved.")
     diagnostics = StagedEditValidator.run(PROJECT_PATH, operation)
+    audit_store.append(
+        "editor.edit.validated",
+        "success" if diagnostics.get("success") else "failed",
+        {
+            "operation_id": operation_id,
+            "relative_file": operation["relative_file"],
+            "passed": diagnostics.get("summary", {}).get("passed", 0),
+            "failed": diagnostics.get("summary", {}).get("failed", 0),
+        },
+    )
     return {
         "success": diagnostics.get("success", False),
         "diagnostics": diagnostics,
@@ -487,6 +620,14 @@ def undo_last_editor_edit():
     operation = editor_operation_store.request_undo()
     if operation is None:
         api_error(409, "nothing_to_undo", "There is no applied edit to undo.")
+    audit_store.append(
+        "editor.edit.undo_requested",
+        "pending",
+        {
+            "operation_id": operation["id"],
+            "relative_file": operation["relative_file"],
+        },
+    )
     return {
         "success": True,
         "operation_id": operation["id"],

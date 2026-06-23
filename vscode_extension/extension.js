@@ -6,6 +6,7 @@ const https = require("https");
 let statusItem;
 let syncTimer;
 let operationTimer;
+let contextHeartbeatTimer;
 let processingOperation = false;
 let lastContext = null;
 const previewDocuments = new Map();
@@ -405,12 +406,17 @@ function activate(extensionContext) {
     () => processNextOperation(extensionContext),
     1000,
   );
+  contextHeartbeatTimer = setInterval(
+    () => synchronize(false),
+    15000,
+  );
   processNextOperation(extensionContext);
 }
 
 function deactivate() {
   clearTimeout(syncTimer);
   clearInterval(operationTimer);
+  clearInterval(contextHeartbeatTimer);
 }
 
 module.exports = {

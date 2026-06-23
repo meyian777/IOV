@@ -22,6 +22,10 @@ isolated project copy. It touches the real file only after validation passes,
 then creates a persistent backup outside the project before saving. The last
 successful edit can be undone by voice.
 
+The bridge also sends a lightweight context heartbeat every 15 seconds, so it
+automatically reconnects after a LabVoice backend restart without requiring the
+user to change files or reload the editor.
+
 ## Run for development
 
 Start LabVoice, open this folder in VS Code, and press `F5`. In the Extension
