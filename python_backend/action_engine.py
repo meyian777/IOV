@@ -3,31 +3,16 @@ import subprocess
 
 
 class ActionEngine:
+    VSCODE_BUNDLE_ID = "com.microsoft.VSCode"
+
     @staticmethod
     def execute(action: str, project_path: str):
         root = Path(project_path).expanduser().resolve()
         if action == "OPEN_VSCODE":
-            subprocess.Popen(["open", "-a", "Visual Studio Code"])
-
-            return {
-                "success": True,
-                "message": "Visual Studio Code opened successfully.",
-            }
+            return ActionEngine._open_vscode()
 
         if action == "OPEN_PROJECT":
-            subprocess.Popen(
-                [
-                    "open",
-                    "-a",
-                    "Visual Studio Code",
-                    str(root),
-                ]
-            )
-
-            return {
-                "success": True,
-                "message": "LabVoice project opened successfully.",
-            }
+            return ActionEngine._open_project_in_vscode(root)
 
         if action == "RUN_FLUTTER":
             flutter_root = ActionEngine._find_flutter_project(root)
@@ -89,3 +74,107 @@ class ActionEngine:
             ),
             None,
         )
+
+    @staticmethod
+    def _open_vscode() -> dict:
+        if ActionEngine._is_vscode_running():
+            subprocess.Popen(
+                [
+                    "osascript",
+                    "-e",
+                    (
+                        f'tell application id "{ActionEngine.VSCODE_BUNDLE_ID}" '
+                        "to activate"
+                    ),
+                ]
+            )
+            return {
+                "success": True,
+                "message": (
+                    "Visual Studio Code was already open and is now active."
+                ),
+                "reused_existing_window": True,
+            }
+
+        subprocess.Popen(
+            ["open", "-b", ActionEngine.VSCODE_BUNDLE_ID]
+        )
+        return {
+            "success": True,
+            "message": "Visual Studio Code opened successfully.",
+            "reused_existing_window": False,
+        }
+
+    @staticmethod
+    def _open_project_in_vscode(root: Path) -> dict:
+        vscode_cli = ActionEngine._find_vscode_cli()
+        if vscode_cli is not None:
+            subprocess.Popen(
+                [
+                    str(vscode_cli),
+                    "--reuse-window",
+                    str(root),
+                ]
+            )
+            return {
+                "success": True,
+                "message": (
+                    "LabVoice project opened in the existing Visual Studio "
+                    "Code window."
+                ),
+                "reused_existing_window": True,
+            }
+
+        subprocess.Popen(
+            [
+                "open",
+                "-b",
+                ActionEngine.VSCODE_BUNDLE_ID,
+                str(root),
+            ]
+        )
+        return {
+            "success": True,
+            "message": "LabVoice project opened successfully.",
+            "reused_existing_window": ActionEngine._is_vscode_running(),
+        }
+
+    @staticmethod
+    def _is_vscode_running() -> bool:
+        result = subprocess.run(
+            [
+                "osascript",
+                "-e",
+                (
+                    f'application id "{ActionEngine.VSCODE_BUNDLE_ID}" '
+                    "is running"
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return result.returncode == 0 and result.stdout.strip() == "true"
+
+    @staticmethod
+    def _find_vscode_cli() -> Path | None:
+        candidates = (
+            Path(
+                "/Applications/Visual Studio Code.app/Contents/Resources/"
+                "app/bin/code"
+            ),
+            Path.home()
+            / "Applications/Visual Studio Code.app/Contents/Resources/app/bin/code",
+        )
+        for candidate in candidates:
+            if candidate.is_file():
+                return candidate
+
+        volumes = Path("/Volumes")
+        if volumes.is_dir():
+            for candidate in volumes.glob(
+                "*/Visual Studio Code.app/Contents/Resources/app/bin/code"
+            ):
+                if candidate.is_file():
+                    return candidate
+        return None
