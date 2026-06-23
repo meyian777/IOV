@@ -9,6 +9,7 @@ import os
 from action_engine import ActionEngine
 from code_capability_router import CodeCapabilityRouter
 from diagnostics_runner import DiagnosticsRunner
+from editor_context_store import EditorContextStore
 from founder_profile_store import FounderProfileStore
 from permission_engine import PermissionEngine
 from project_inspector import ProjectInspector
@@ -58,6 +59,19 @@ class CodeRouteRequest(BaseModel):
     message: str = Field(min_length=1, max_length=10000)
 
 
+class EditorContextUpdate(BaseModel):
+    workspace_roots: list[str] = Field(default_factory=list)
+    workspace_files: list[str] = Field(default_factory=list)
+    open_files: list[str] = Field(default_factory=list)
+    active_file: str = ""
+    relative_file: str = ""
+    language_id: str = ""
+    document_text: str = ""
+    selected_text: str = ""
+    cursor_line: int = Field(default=0, ge=0)
+    cursor_character: int = Field(default=0, ge=0)
+
+
 class SessionUpdate(BaseModel):
     current_goal: str | None = None
     current_task: str | None = None
@@ -77,6 +91,7 @@ SESSION_DATABASE_PATH = os.getenv(
 )
 session_store = SessionStore(SESSION_DATABASE_PATH)
 permission_engine = PermissionEngine()
+editor_context_store = EditorContextStore()
 
 DEFAULT_PUBLIC_FOUNDER_BIOGRAPHIES = {
     "es": (
@@ -249,6 +264,30 @@ def update_session(request: SessionUpdate):
     }
 
 
+@app.get("/editor/context")
+def get_editor_context():
+    return {
+        "success": True,
+        "context": editor_context_store.get(),
+    }
+
+
+@app.post("/editor/context")
+def update_editor_context(request: EditorContextUpdate):
+    context = editor_context_store.update(request.model_dump())
+    return {
+        "success": True,
+        "context": {
+            "connected": context["connected"],
+            "active_file": context["active_file"],
+            "relative_file": context["relative_file"],
+            "language_id": context["language_id"],
+            "workspace_file_count": len(context["workspace_files"]),
+            "updated_at": context["updated_at"],
+        },
+    }
+
+
 SYSTEM_PROMPT = """
 You are LabVoice.
 
@@ -289,7 +328,15 @@ Avoid sounding corporate, theatrical, or overly enthusiastic.
 @app.post("/chat")
 def chat(request: ChatRequest):
     session = session_store.get()
-    code_route = CodeCapabilityRouter.route(request.message, PROJECT_PATH)
+    editor_context = editor_context_store.get()
+    routing_text = " ".join(
+        (
+            request.message,
+            editor_context.get("relative_file", ""),
+            editor_context.get("language_id", ""),
+        )
+    )
+    code_route = CodeCapabilityRouter.route(routing_text, PROJECT_PATH)
     context = (
         f"Active project: {session['active_project']}. "
         f"Current goal: {session['current_goal']}. "
@@ -332,7 +379,9 @@ def chat(request: ChatRequest):
                         f"Capability routing: "
                         f"{CodeCapabilityRouter.prompt_context(code_route)}\n"
                         f"Respond in language code: {request.language}.\n"
-                        f"Current operational context: {context}"
+                        f"Current operational context: {context}\n"
+                        f"Current editor context:\n"
+                        f"{EditorContextStore.prompt_context(editor_context)}"
                     ),
                 },
                 {
@@ -352,6 +401,12 @@ def chat(request: ChatRequest):
         "success": True,
         "response": response.output_text,
         "routing": code_route.to_dict(),
+        "editor": {
+            "connected": editor_context["connected"],
+            "active_file": editor_context["active_file"],
+            "relative_file": editor_context["relative_file"],
+            "language_id": editor_context["language_id"],
+        },
     }
 
 
