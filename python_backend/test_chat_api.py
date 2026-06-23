@@ -3,12 +3,13 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from main import app, editor_context_store
+from main import app, conversation_store, editor_context_store
 
 
 class ChatApiTest(unittest.TestCase):
     def setUp(self):
         editor_context_store._context = editor_context_store._empty_context()
+        conversation_store.clear()
 
     def test_empty_message_is_rejected(self):
         response = TestClient(app).post("/chat", json={"message": ""})
@@ -47,6 +48,7 @@ class ChatApiTest(unittest.TestCase):
         system_content = create.call_args.kwargs["input"][0]["content"]
         self.assertIn("Respond in language code: es", system_content)
         self.assertIn("Current operational context", system_content)
+        self.assertIn("Recent conversation", system_content)
         self.assertIn("Capability routing", system_content)
         self.assertIn("routing", response.json())
 
@@ -113,6 +115,25 @@ class ChatApiTest(unittest.TestCase):
         self.assertIn("void main() {}", system_content)
         self.assertTrue(response.json()["editor"]["connected"])
         self.assertEqual(response.json()["routing"]["language"], "dart")
+
+    @patch("main.client.responses.create")
+    def test_chat_receives_previous_conversational_turn(self, create):
+        create.return_value.output_text = "Primera respuesta."
+        client = TestClient(app)
+        client.post(
+            "/chat",
+            json={"message": "Recuerda esta tarea", "language": "es"},
+        )
+        create.return_value.output_text = "Continuemos."
+
+        client.post(
+            "/chat",
+            json={"message": "Sigamos", "language": "es"},
+        )
+
+        system_content = create.call_args.kwargs["input"][0]["content"]
+        self.assertIn("Recuerda esta tarea", system_content)
+        self.assertIn("Primera respuesta.", system_content)
 
     @patch("main.client.audio.speech.create")
     def test_speech_returns_natural_voice_audio(self, create):

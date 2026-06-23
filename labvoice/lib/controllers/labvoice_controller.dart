@@ -23,6 +23,8 @@ class LabVoiceController extends ChangeNotifier {
   String? _pendingConfirmationToken;
   String? _pendingActionName;
   String? _pendingEditOperationId;
+  Timer? _progressTimer;
+  int _progressGeneration = 0;
 
   String get activeLanguageName {
     if (selectedLanguageCode != "auto") return selectedLanguageName;
@@ -318,6 +320,11 @@ class LabVoiceController extends ChangeNotifier {
   }
 
   Future<void> _runDiagnostics(String rawCommand) async {
+    final progress = _beginProgress(rawCommand, const [
+      "Sigo ejecutando las pruebas. Te aviso apenas tenga el resultado.",
+      "El diagnóstico continúa; estoy revisando cada comprobación sin interrumpir el proceso.",
+      "Todavía estoy trabajando. No necesitas repetir el comando.",
+    ]);
     await _update(
       heard: rawCommand,
       response: LanguageManager.text(
@@ -330,6 +337,7 @@ class LabVoiceController extends ChangeNotifier {
     );
     try {
       final result = await ActionExecutor.runDiagnostics();
+      _finishProgress(progress);
       final summary = result["summary"] as Map<String, dynamic>?;
       final failed = summary?["failed"] ?? 0;
       await _update(
@@ -345,6 +353,7 @@ class LabVoiceController extends ChangeNotifier {
         security: "Controlled execution",
       );
     } catch (error) {
+      _finishProgress(progress);
       await _failure(
         rawCommand,
         LanguageManager.text(
@@ -384,6 +393,10 @@ class LabVoiceController extends ChangeNotifier {
   }
 
   Future<void> _runChat(String rawCommand, String message) async {
+    final progress = _beginProgress(rawCommand, const [
+      "Sigo revisando el contexto. Ya casi tengo una respuesta útil.",
+      "Continúo analizando; no necesitas repetir la pregunta.",
+    ]);
     try {
       final result = await LabVoiceApi.chat(
         message,
@@ -396,6 +409,7 @@ class LabVoiceController extends ChangeNotifier {
       final action = domain == "software_engineering"
           ? "Code agent · $capability · $codeLanguage"
           : "AI conversation";
+      _finishProgress(progress);
       await _update(
         heard: rawCommand,
         response: result["response"] ?? "I could not produce a response.",
@@ -404,6 +418,7 @@ class LabVoiceController extends ChangeNotifier {
         security: "Secure",
       );
     } on LabVoiceApiException catch (error) {
+      _finishProgress(progress);
       await _update(
         heard: rawCommand,
         response: error.message,
@@ -415,6 +430,10 @@ class LabVoiceController extends ChangeNotifier {
   }
 
   Future<void> _prepareEdit(String rawCommand) async {
+    final progress = _beginProgress(rawCommand, const [
+      "Sigo preparando el cambio y comprobando que no afecte código ajeno.",
+      "La vista previa todavía se está construyendo. El archivo original permanece intacto.",
+    ]);
     await _update(
       heard: rawCommand,
       response: "Estoy preparando una vista previa exacta del cambio.",
@@ -428,6 +447,7 @@ class LabVoiceController extends ChangeNotifier {
         language: LanguageManager.effectiveLanguage,
       );
       _pendingEditOperationId = result["operation_id"]?.toString();
+      _finishProgress(progress);
       await _update(
         heard: rawCommand,
         response:
@@ -439,6 +459,7 @@ class LabVoiceController extends ChangeNotifier {
         security: "Awaiting explicit confirmation",
       );
     } on LabVoiceApiException catch (error) {
+      _finishProgress(progress);
       await _update(
         heard: rawCommand,
         response: error.message,
@@ -525,6 +546,32 @@ class LabVoiceController extends ChangeNotifier {
         return;
       }
     }
+  }
+
+  int _beginProgress(String heard, List<String> messages) {
+    final generation = ++_progressGeneration;
+    var index = 0;
+    _progressTimer?.cancel();
+    _progressTimer = Timer.periodic(const Duration(seconds: 45), (_) {
+      if (generation != _progressGeneration || messages.isEmpty) return;
+      final message = messages[index % messages.length];
+      index++;
+      heardCommand = heard;
+      response = message;
+      detectedIntent = "task_progress";
+      technicalAction = "Long-running task remains active.";
+      securityLevel = "In progress";
+      notifyListeners();
+      unawaited(_speakResponse(message));
+    });
+    return generation;
+  }
+
+  void _finishProgress(int generation) {
+    if (generation != _progressGeneration) return;
+    _progressTimer?.cancel();
+    _progressTimer = null;
+    _progressGeneration++;
   }
 
   Future<void> _cancelPendingEdit(String rawCommand) async {
@@ -737,5 +784,11 @@ class LabVoiceController extends ChangeNotifier {
     if (error == null) return;
     technicalAction = "Voice playback failed: $error";
     notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _progressTimer?.cancel();
+    super.dispose();
   }
 }

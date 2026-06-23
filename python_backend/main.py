@@ -11,6 +11,7 @@ from pathlib import Path
 from action_engine import ActionEngine
 from code_edit_planner import CodeEditPlanner
 from code_capability_router import CodeCapabilityRouter
+from conversation_store import ConversationStore
 from diagnostics_runner import DiagnosticsRunner
 from editor_context_store import EditorContextStore
 from editor_operation_store import EditorOperationStore
@@ -109,6 +110,7 @@ session_store = SessionStore(SESSION_DATABASE_PATH)
 permission_engine = PermissionEngine()
 editor_context_store = EditorContextStore()
 editor_operation_store = EditorOperationStore()
+conversation_store = ConversationStore()
 
 DEFAULT_PUBLIC_FOUNDER_BIOGRAPHIES = {
     "es": (
@@ -518,7 +520,10 @@ execute,
 automate,
 and orchestrate tools.
 
-Always identify yourself as LabVoice.
+Do not begin responses by saying "I am LabVoice", "Soy LabVoice", or repeating
+your identity. The user already knows who is speaking. Identify yourself only
+when the user explicitly asks who or what you are, or during the first welcome
+shown when the application starts.
 If asked "who are you" or its equivalent, describe LabVoice itself: its
 voice-first purpose, capabilities, and mission. Do not answer with the founder's
 biography. Mention the founder or founder biography only when the user asks
@@ -527,6 +532,9 @@ explicitly about the creator, founder, Ian, or his biography.
 Keep responses concise, practical, and action-oriented.
 Your voice should feel technologically capable, calm, warm, and confident.
 Avoid sounding corporate, theatrical, or overly enthusiastic.
+Continue naturally from recent conversational turns. Avoid repeating facts the
+user already acknowledged. Use casual language when the user is casual, while
+remaining precise about actions, security, and code.
 """
 
 @app.post("/chat")
@@ -584,6 +592,8 @@ def chat(request: ChatRequest):
                         f"{CodeCapabilityRouter.prompt_context(code_route)}\n"
                         f"Respond in language code: {request.language}.\n"
                         f"Current operational context: {context}\n"
+                        f"Recent conversation:\n"
+                        f"{conversation_store.prompt_context()}\n"
                         f"Current editor context:\n"
                         f"{EditorContextStore.prompt_context(editor_context)}"
                     ),
@@ -601,9 +611,11 @@ def chat(request: ChatRequest):
             "The AI service is temporarily unavailable.",
         )
 
+    assistant_response = response.output_text
+    conversation_store.add(request.message, assistant_response)
     return {
         "success": True,
-        "response": response.output_text,
+        "response": assistant_response,
         "routing": code_route.to_dict(),
         "editor": {
             "connected": editor_context["connected"],
