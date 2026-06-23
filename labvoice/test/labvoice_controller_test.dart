@@ -35,4 +35,13 @@ void main() {
     expect(controller.detectedIntent, 'speech_recognition_error');
     expect(controller.technicalAction, 'error_audio');
   });
+
+  test('controller marks ambient speech as ignored without answering', () {
+    final controller = LabVoiceController();
+
+    controller.ambientSpeechIgnored('conversación de fondo');
+
+    expect(controller.detectedIntent, 'ambient_speech_ignored');
+    expect(controller.securityLevel, 'Wake word required');
+  });
 }

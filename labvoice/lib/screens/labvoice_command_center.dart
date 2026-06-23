@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 import '../controllers/labvoice_controller.dart';
 import '../services/language_manager.dart';
 import '../services/voice_engine.dart';
+import '../services/wake_word_gate.dart';
 
 class LabVoiceCommandCenter extends StatefulWidget {
   const LabVoiceCommandCenter({super.key});
@@ -16,8 +19,12 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter>
     with SingleTickerProviderStateMixin {
   final LabVoiceController _controller = LabVoiceController();
   final stt.SpeechToText _speech = stt.SpeechToText();
+  final WakeWordGate _wakeWordGate = WakeWordGate();
   late final AnimationController _pulse;
   bool _speechInitialized = false;
+  final bool _continuousListening = true;
+  bool _startingListener = false;
+  Timer? _rearmTimer;
 
   @override
   void initState() {
@@ -29,7 +36,14 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter>
       upperBound: 1.06,
     );
     _controller.addListener(_refresh);
-    _controller.initialize();
+    VoiceEngine.speaking.addListener(_voiceStateChanged);
+    unawaited(_initializeContinuousVoice());
+  }
+
+  Future<void> _initializeContinuousVoice() async {
+    await _controller.initialize();
+    await _initializeSpeech();
+    _scheduleRearm();
   }
 
   void _refresh() {
@@ -45,21 +59,53 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter>
   @override
   void dispose() {
     _controller.removeListener(_refresh);
+    VoiceEngine.speaking.removeListener(_voiceStateChanged);
     _controller.dispose();
     _pulse.dispose();
+    _rearmTimer?.cancel();
     _speech.cancel();
     super.dispose();
   }
 
-  Future<void> _listen() async {
-    if (_controller.isListening) return;
-    await VoiceEngine.stop();
+  void _voiceStateChanged() {
+    if (VoiceEngine.speaking.value) {
+      _rearmTimer?.cancel();
+      if (_speech.isListening) {
+        unawaited(_speech.cancel());
+        _controller.setListening(false);
+      }
+      return;
+    }
+    _scheduleRearm();
+  }
+
+  void _scheduleRearm([Duration delay = const Duration(milliseconds: 450)]) {
+    if (!_continuousListening || !mounted) return;
+    _rearmTimer?.cancel();
+    _rearmTimer = Timer(delay, () {
+      if (mounted && !VoiceEngine.speaking.value) {
+        unawaited(_listen());
+      }
+    });
+  }
+
+  Future<void> _listen({bool manual = false}) async {
+    if (_controller.isListening || _startingListener) return;
+    if (VoiceEngine.speaking.value) {
+      if (!manual) {
+        _scheduleRearm();
+        return;
+      }
+      await VoiceEngine.stop();
+    }
+    _startingListener = true;
     await Future<void>.delayed(const Duration(milliseconds: 150));
 
     final available = _speechInitialized
         ? _speech.isAvailable
         : await _initializeSpeech();
     if (!available) {
+      _startingListener = false;
       await _controller.microphoneUnavailable();
       return;
     }
@@ -87,15 +133,29 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter>
           final command = result.recognizedWords.trim();
           await _speech.stop();
           _controller.setListening(false);
-          if (command.isNotEmpty) await _controller.processCommand(command);
+          if (command.isNotEmpty) {
+            final decision = _wakeWordGate.evaluate(command);
+            if (decision.accepted) {
+              await _controller.processCommand(decision.command);
+            } else {
+              _controller.ambientSpeechIgnored(command);
+            }
+          }
+          _scheduleRearm();
         },
       );
+      _startingListener = false;
       if (!_speech.isListening && !_speech.hasRecognized) {
         final error = _speech.lastError?.errorMsg ?? "listen_not_started";
-        await _controller.speechRecognitionError(error);
+        if (error != "listen_not_started") {
+          await _controller.speechRecognitionError(error);
+        }
+        _scheduleRearm();
       }
     } catch (error) {
+      _startingListener = false;
       await _controller.speechRecognitionError(error.toString());
+      _scheduleRearm(const Duration(seconds: 1));
     }
   }
 
@@ -105,10 +165,12 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter>
       onStatus: (status) {
         if (status == "done" || status == "notListening") {
           _controller.setListening(false);
+          _scheduleRearm();
         }
       },
       onError: (error) {
         _controller.speechRecognitionError(error.errorMsg);
+        _scheduleRearm(const Duration(seconds: 1));
       },
     );
     _speechInitialized = available;
@@ -145,7 +207,7 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter>
           : "Activar micrófono de LabVoice",
       hint: "Toca para hablar con LabVoice",
       child: GestureDetector(
-        onTap: _listen,
+        onTap: () => _listen(manual: true),
         child: ScaleTransition(
           scale: _pulse,
           child: AnimatedContainer(
@@ -310,8 +372,10 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter>
                         const SizedBox(width: 10),
                         Text(
                           _controller.isListening
-                              ? "ESCUCHANDO"
-                              : "LISTO PARA ESCUCHAR",
+                              ? "ESCUCHA CONTINUA"
+                              : VoiceEngine.speaking.value
+                              ? "RESPONDIENDO"
+                              : "REARMANDO ESCUCHA",
                           style: theme.textTheme.labelMedium?.copyWith(
                             color: Colors.white60,
                             letterSpacing: 1.5,
@@ -335,9 +399,11 @@ class _LabVoiceCommandCenterState extends State<LabVoiceCommandCenter>
                     _voiceCore(colors),
                     const SizedBox(height: 18),
                     Text(
-                      _controller.isListening
-                          ? "Habla con naturalidad"
-                          : "Toca para hablar",
+                      VoiceEngine.speaking.value
+                          ? "La escucha volverá al terminar"
+                          : _wakeWordGate.conversationActive
+                          ? "Conversación activa"
+                          : "Di “LabVoice” para comenzar",
                       style: theme.textTheme.bodyMedium?.copyWith(
                         color: Colors.white38,
                       ),

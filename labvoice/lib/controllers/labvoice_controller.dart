@@ -83,6 +83,16 @@ class LabVoiceController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void ambientSpeechIgnored(String transcript) {
+    isListening = false;
+    heardCommand = transcript;
+    detectedIntent = "ambient_speech_ignored";
+    technicalAction =
+        "Speech was not addressed to LabVoice and was safely ignored.";
+    securityLevel = "Wake word required";
+    notifyListeners();
+  }
+
   Future<void> speechRecognitionError(String error) async {
     isListening = false;
     heardCommand = LanguageManager.text(
