@@ -67,6 +67,38 @@ class LabVoiceApi {
     );
   }
 
+  static Future<Map<String, dynamic>> prepareEdit(
+    String instruction, {
+    required String language,
+  }) async {
+    return _request(
+      "POST",
+      "/editor/edit/prepare",
+      body: {"instruction": instruction, "language": language},
+      timeout: const Duration(minutes: 2),
+    );
+  }
+
+  static Future<Map<String, dynamic>> confirmEdit(String operationId) async {
+    return _request(
+      "POST",
+      "/editor/edit/$operationId/confirm",
+      timeout: const Duration(seconds: 30),
+    );
+  }
+
+  static Future<Map<String, dynamic>> getEdit(String operationId) async {
+    return _request("GET", "/editor/edit/$operationId");
+  }
+
+  static Future<Map<String, dynamic>> cancelEdit(String operationId) async {
+    return _request("POST", "/editor/edit/$operationId/cancel");
+  }
+
+  static Future<Map<String, dynamic>> undoLastEdit() async {
+    return _request("POST", "/editor/edit/undo");
+  }
+
   static Future<Uint8List> speech(
     String text, {
     required String language,

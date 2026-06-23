@@ -13,9 +13,15 @@ class LabVoiceApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'LABVOICE DEV',
+      title: 'LabVoice',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
+        brightness: Brightness.dark,
+        scaffoldBackgroundColor: const Color(0xFF0C0E16),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF7568FF),
+          brightness: Brightness.dark,
+        ),
+        fontFamily: "SF Pro Display",
         useMaterial3: true,
       ),
       home: const LabVoiceCommandCenter(),

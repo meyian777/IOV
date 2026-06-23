@@ -1,6 +1,6 @@
 class IntentEngine {
   static String detectIntent(String command) {
-    final text = command.toLowerCase().trim();
+    final text = _normalizeCommand(command);
 
     if (text == "detente" ||
         text == "deténte" ||
@@ -68,7 +68,13 @@ class IntentEngine {
       return "founder_biography";
     }
 
-    if (text == "confirmar" ||
+    if (text == "sí, aplicar" ||
+        text == "si, aplicar" ||
+        text == "sí aplicar" ||
+        text == "si aplicar" ||
+        text == "aplicar cambio" ||
+        text == "aplica el cambio" ||
+        text == "confirmar" ||
         text == "confirmo" ||
         text == "sí" ||
         text == "si" ||
@@ -86,6 +92,25 @@ class IntentEngine {
         text == "no" ||
         text == "no cancelar") {
       return "cancel_action";
+    }
+
+    if (text.contains("deshacer último cambio") ||
+        text.contains("deshacer ultimo cambio") ||
+        text.contains("revierte el último cambio") ||
+        text.contains("revierte el ultimo cambio") ||
+        text.contains("restaura el archivo anterior") ||
+        text.contains("undo last change")) {
+      return "undo_edit";
+    }
+
+    if (text.startsWith("modifica ") ||
+        text.startsWith("cambia ") ||
+        text.startsWith("reemplaza ") ||
+        text.startsWith("agrega ") ||
+        text.startsWith("añade ") ||
+        text.startsWith("corrige ") ||
+        text.startsWith("edita ")) {
+      return "edit_active_file";
     }
 
     if (text.contains("ejecuta diagnosticos") ||
@@ -151,5 +176,16 @@ class IntentEngine {
     }
 
     return "unknown";
+  }
+
+  static String _normalizeCommand(String command) {
+    var text = command.toLowerCase().trim();
+    text = text.replaceFirst(
+      RegExp(
+        r'^(?:ok(?:ay)?|oye|hey)?[\s,.:;!?-]*(?:lab\s*voice|labvoice)?[\s,.:;!?-]*',
+      ),
+      "",
+    );
+    return text.trim();
   }
 }

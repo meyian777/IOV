@@ -17,12 +17,24 @@ void main() {
     expect(IntentEngine.detectIntent('sí'), 'confirm_action');
     expect(IntentEngine.detectIntent('cancel'), 'cancel_action');
     expect(IntentEngine.detectIntent('no'), 'cancel_action');
+    expect(IntentEngine.detectIntent('Sí, aplicar'), 'confirm_action');
+  });
+
+  test('detecta edición y deshacer por voz', () {
+    expect(
+      IntentEngine.detectIntent('Modifica el título del archivo'),
+      'edit_active_file',
+    );
+    expect(IntentEngine.detectIntent('Deshacer último cambio'), 'undo_edit');
   });
 
   test('detecta interrupción y resumen de voz', () {
     expect(IntentEngine.detectIntent('detente'), 'stop_speaking');
     expect(IntentEngine.detectIntent('silencio'), 'stop_speaking');
     expect(IntentEngine.detectIntent('stop speaking'), 'stop_speaking');
+    expect(IntentEngine.detectIntent('ok detente'), 'stop_speaking');
+    expect(IntentEngine.detectIntent('LabVoice, detente'), 'stop_speaking');
+    expect(IntentEngine.detectIntent('ok Lab Voice silencio'), 'stop_speaking');
     expect(IntentEngine.detectIntent('resúmelo'), 'summarize_response');
     expect(IntentEngine.detectIntent('make it shorter'), 'summarize_response');
   });

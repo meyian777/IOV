@@ -6,6 +6,7 @@ import 'labvoice_api.dart';
 import 'language_manager.dart';
 
 class VoiceEngine {
+  static const int maxSpeechCharacters = 3900;
   static final AudioPlayer _player = AudioPlayer();
   static int _speechGeneration = 0;
   static File? _activeAudioFile;
@@ -19,7 +20,7 @@ class VoiceEngine {
 
     try {
       final audio = await LabVoiceApi.speech(
-        text,
+        textForSpeech(text),
         language: LanguageManager.effectiveLanguage,
       );
       if (generation != _speechGeneration) return null;
@@ -55,6 +56,19 @@ class VoiceEngine {
 
   static Future<void> setLanguage(String locale) async {
     // The cloud voice receives the active response language per request.
+  }
+
+  static String textForSpeech(String text) {
+    final normalized = text.trim();
+    if (normalized.length <= maxSpeechCharacters) return normalized;
+
+    final shortened = normalized.substring(0, maxSpeechCharacters);
+    final sentenceBoundary = shortened.lastIndexOf(RegExp(r'[.!?]\s'));
+    final safeEnd = sentenceBoundary > 2500
+        ? sentenceBoundary + 1
+        : maxSpeechCharacters;
+    return "${shortened.substring(0, safeEnd).trim()} "
+        "La respuesta completa permanece visible en pantalla.";
   }
 
   static Future<void> _deleteActiveAudioFile() async {

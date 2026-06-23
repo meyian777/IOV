@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 import subprocess
 import sys
 import time
@@ -9,7 +10,7 @@ MAX_OUTPUT_CHARACTERS = 6000
 
 class DiagnosticsRunner:
     @staticmethod
-    def run(project_path: str) -> dict:
+    def run(project_path: str, environment: dict | None = None) -> dict:
         root = Path(project_path).expanduser().resolve()
 
         if not root.is_dir():
@@ -28,7 +29,12 @@ class DiagnosticsRunner:
             }
 
         results = [
-            DiagnosticsRunner._run_check(name, command, working_directory)
+            DiagnosticsRunner._run_check(
+                name,
+                command,
+                working_directory,
+                environment,
+            )
             for name, command, working_directory in checks
         ]
         passed = sum(result["success"] for result in results)
@@ -97,6 +103,7 @@ class DiagnosticsRunner:
         name: str,
         command: list[str],
         working_directory: Path,
+        environment: dict | None = None,
     ) -> dict:
         started = time.monotonic()
 
@@ -107,6 +114,7 @@ class DiagnosticsRunner:
                 capture_output=True,
                 text=True,
                 timeout=120,
+                env=environment or os.environ.copy(),
             )
             output = "\n".join(
                 part.strip()

@@ -22,6 +22,7 @@ class LabVoiceController extends ChangeNotifier {
 
   String? _pendingConfirmationToken;
   String? _pendingActionName;
+  String? _pendingEditOperationId;
 
   String get activeLanguageName {
     if (selectedLanguageCode != "auto") return selectedLanguageName;
@@ -132,10 +133,18 @@ class LabVoiceController extends ChangeNotifier {
       return;
     }
     if (intent == "confirm_action") {
+      if (_pendingEditOperationId != null) {
+        await _confirmPendingEdit(rawCommand);
+        return;
+      }
       await _confirmPendingAction(rawCommand);
       return;
     }
     if (intent == "cancel_action") {
+      if (_pendingEditOperationId != null) {
+        await _cancelPendingEdit(rawCommand);
+        return;
+      }
       await _cancelPendingAction(rawCommand);
       return;
     }
@@ -169,6 +178,12 @@ class LabVoiceController extends ChangeNotifier {
         return;
       case "run_diagnostics":
         await _runDiagnostics(rawCommand);
+        return;
+      case "edit_active_file":
+        await _prepareEdit(rawCommand);
+        return;
+      case "undo_edit":
+        await _undoLastEdit(rawCommand);
         return;
       case "open_vscode":
         await _requestAction(rawCommand, intent, "OPEN_VSCODE");
@@ -394,6 +409,170 @@ class LabVoiceController extends ChangeNotifier {
         response: error.message,
         intent: "backend_error",
         action: error.code ?? "chat_failed",
+        security: "Blocked",
+      );
+    }
+  }
+
+  Future<void> _prepareEdit(String rawCommand) async {
+    await _update(
+      heard: rawCommand,
+      response: "Estoy preparando una vista previa exacta del cambio.",
+      intent: "edit_active_file",
+      action: "Preparing a reversible editor operation.",
+      security: "Preview only",
+    );
+    try {
+      final result = await LabVoiceApi.prepareEdit(
+        rawCommand,
+        language: LanguageManager.effectiveLanguage,
+      );
+      _pendingEditOperationId = result["operation_id"]?.toString();
+      await _update(
+        heard: rawCommand,
+        response:
+            "Preparé el cambio en ${result["relative_file"]}. "
+            "${result["summary"]}. Revisa la comparación en Visual Studio "
+            "Code y di “Sí, aplicar” o “Cancelar”.",
+        intent: "edit_preview",
+        action: "Exact diff sent to VS Code for review.",
+        security: "Awaiting explicit confirmation",
+      );
+    } on LabVoiceApiException catch (error) {
+      await _update(
+        heard: rawCommand,
+        response: error.message,
+        intent: "edit_failed",
+        action: error.code ?? "edit_prepare_failed",
+        security: "Blocked",
+      );
+    }
+  }
+
+  Future<void> _confirmPendingEdit(String rawCommand) async {
+    final operationId = _pendingEditOperationId;
+    if (operationId == null) return;
+    try {
+      final result = await LabVoiceApi.confirmEdit(operationId);
+      _pendingEditOperationId = null;
+      await _update(
+        heard: rawCommand,
+        response:
+            result["message"] ??
+            "Cambio aprobado. Lo aplicaré, ejecutaré las pruebas y restauraré "
+                "el original automáticamente si algo falla.",
+        intent: "edit_confirmed",
+        action: "Edit approved for transactional application.",
+        security: "Confirmed",
+      );
+      unawaited(_monitorEdit(operationId));
+    } on LabVoiceApiException catch (error) {
+      await _update(
+        heard: rawCommand,
+        response: error.message,
+        intent: "edit_confirmation_failed",
+        action: error.code ?? "edit_confirmation_failed",
+        security: "Blocked",
+      );
+    }
+  }
+
+  Future<void> _monitorEdit(String operationId) async {
+    const terminalStates = {"applied", "failed", "canceled", "undone"};
+    for (var attempt = 0; attempt < 300; attempt++) {
+      await Future<void>.delayed(const Duration(seconds: 1));
+      try {
+        final result = await LabVoiceApi.getEdit(operationId);
+        final operation = result["operation"] as Map<String, dynamic>?;
+        final status = operation?["status"]?.toString();
+        if (status == null || !terminalStates.contains(status)) continue;
+
+        if (status == "applied") {
+          final diagnostics =
+              operation?["diagnostics"] as Map<String, dynamic>?;
+          final summary = diagnostics?["summary"] as Map<String, dynamic>?;
+          await _update(
+            heard: heardCommand,
+            response:
+                "Cambio aplicado y guardado. "
+                "${summary?["passed"] ?? "Todas las"} pruebas pasaron. "
+                "Puedes decir “Deshacer último cambio”.",
+            intent: "edit_applied",
+            action: "Edit saved after successful validation.",
+            security: "Validated and reversible",
+          );
+        } else if (status == "failed") {
+          await _update(
+            heard: heardCommand,
+            response:
+                "Las pruebas fallaron o la validación no pudo completarse. "
+                "No modifiqué el archivo original.",
+            intent: "edit_rolled_back",
+            action: operation?["error"]?.toString() ?? "Edit rolled back.",
+            security: "Automatically restored",
+          );
+        } else if (status == "undone") {
+          await _update(
+            heard: heardCommand,
+            response: "Listo. Restauré la copia anterior del archivo.",
+            intent: "edit_undone",
+            action: "Previous editor backup restored.",
+            security: "Restored",
+          );
+        }
+        return;
+      } on LabVoiceApiException {
+        return;
+      }
+    }
+  }
+
+  Future<void> _cancelPendingEdit(String rawCommand) async {
+    final operationId = _pendingEditOperationId;
+    if (operationId == null) return;
+    try {
+      final result = await LabVoiceApi.cancelEdit(operationId);
+      _pendingEditOperationId = null;
+      await _update(
+        heard: rawCommand,
+        response: result["message"] ?? "Cambio cancelado.",
+        intent: "edit_canceled",
+        action: "Proposed editor operation canceled.",
+        security: "Secure",
+      );
+    } on LabVoiceApiException catch (error) {
+      await _update(
+        heard: rawCommand,
+        response: error.message,
+        intent: "edit_cancel_failed",
+        action: error.code ?? "edit_cancel_failed",
+        security: "Blocked",
+      );
+    }
+  }
+
+  Future<void> _undoLastEdit(String rawCommand) async {
+    try {
+      final result = await LabVoiceApi.undoLastEdit();
+      await _update(
+        heard: rawCommand,
+        response:
+            result["message"] ??
+            "Estoy restaurando la copia anterior del archivo.",
+        intent: "undo_edit",
+        action: "Persistent editor backup restoration requested.",
+        security: "Reversible change",
+      );
+      final operationId = result["operation_id"]?.toString();
+      if (operationId != null) {
+        unawaited(_monitorEdit(operationId));
+      }
+    } on LabVoiceApiException catch (error) {
+      await _update(
+        heard: rawCommand,
+        response: error.message,
+        intent: "undo_edit_failed",
+        action: error.code ?? "undo_edit_failed",
         security: "Blocked",
       );
     }

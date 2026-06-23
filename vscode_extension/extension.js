@@ -1,10 +1,14 @@
 const vscode = require("vscode");
+const crypto = require("crypto");
 const http = require("http");
 const https = require("https");
 
 let statusItem;
 let syncTimer;
+let operationTimer;
+let processingOperation = false;
 let lastContext = null;
+const previewDocuments = new Map();
 
 function backendUrl() {
   return vscode.workspace
@@ -13,20 +17,20 @@ function backendUrl() {
     .replace(/\/$/, "");
 }
 
-function postJson(url, payload) {
+function requestJson(method, url, payload = null, timeout = 5000) {
   return new Promise((resolve, reject) => {
     const target = new URL(url);
-    const body = JSON.stringify(payload);
+    const body = payload === null ? "" : JSON.stringify(payload);
     const transport = target.protocol === "https:" ? https : http;
     const request = transport.request(
       target,
       {
-        method: "POST",
+        method,
         headers: {
           "Content-Type": "application/json",
           "Content-Length": Buffer.byteLength(body),
         },
-        timeout: 5000,
+        timeout,
       },
       (response) => {
         let responseBody = "";
@@ -53,9 +57,17 @@ function postJson(url, payload) {
     );
     request.on("timeout", () => request.destroy(new Error("Request timed out")));
     request.on("error", reject);
-    request.write(body);
+    if (body) request.write(body);
     request.end();
   });
+}
+
+function postJson(url, payload, timeout = 5000) {
+  return requestJson("POST", url, payload, timeout);
+}
+
+function getJson(url, timeout = 5000) {
+  return requestJson("GET", url, null, timeout);
 }
 
 function isLocalFile(document) {
@@ -163,6 +175,175 @@ function scheduleSync() {
   syncTimer = setTimeout(() => synchronize(false), 250);
 }
 
+function documentHash(text) {
+  return crypto.createHash("sha256").update(text).digest("hex");
+}
+
+function fullDocumentRange(document) {
+  const lastLine = document.lineAt(document.lineCount - 1);
+  return new vscode.Range(
+    new vscode.Position(0, 0),
+    lastLine.rangeIncludingLineBreak.end,
+  );
+}
+
+async function reportOperation(operationId, status, extra = {}) {
+  return postJson(
+    `${backendUrl()}/editor/operations/${operationId}/status`,
+    { status, ...extra },
+    10000,
+  );
+}
+
+async function previewOperation(operation) {
+  const sourceUri = vscode.Uri.file(operation.active_file);
+  const previewUri = vscode.Uri.parse(
+    `labvoice-preview:/${encodeURIComponent(operation.relative_file)}` +
+      `?operation=${operation.id}`,
+  );
+  previewDocuments.set(previewUri.toString(), operation.replacement);
+  await vscode.commands.executeCommand(
+    "vscode.diff",
+    sourceUri,
+    previewUri,
+    `${operation.relative_file}: actual ↔ propuesta de LabVoice`,
+    { preview: true },
+  );
+  await reportOperation(operation.id, "previewed");
+  vscode.window.showInformationMessage(
+    `LabVoice preparó: ${operation.summary}. ` +
+      "Revísalo y di “Sí, aplicar” o “Cancelar”.",
+  );
+}
+
+async function writeBackup(extensionContext, operation) {
+  const backupDirectory = vscode.Uri.joinPath(
+    extensionContext.globalStorageUri,
+    "backups",
+  );
+  await vscode.workspace.fs.createDirectory(backupDirectory);
+  const backupUri = vscode.Uri.joinPath(
+    backupDirectory,
+    `${operation.id}.backup`,
+  );
+  await vscode.workspace.fs.writeFile(
+    backupUri,
+    Buffer.from(operation.original, "utf8"),
+  );
+  return backupUri;
+}
+
+async function replaceDocument(document, content) {
+  const edit = new vscode.WorkspaceEdit();
+  edit.replace(document.uri, fullDocumentRange(document), content);
+  const applied = await vscode.workspace.applyEdit(edit);
+  if (!applied) throw new Error("VS Code rejected the workspace edit.");
+  const saved = await document.save();
+  if (!saved) throw new Error("VS Code could not save the edited document.");
+}
+
+async function applyOperation(extensionContext, operation) {
+  const document = await vscode.workspace.openTextDocument(
+    vscode.Uri.file(operation.active_file),
+  );
+  if (documentHash(document.getText()) !== operation.original_hash) {
+    await reportOperation(operation.id, "failed", {
+      error:
+        "The file changed after the preview. Prepare a new edit before applying.",
+    });
+    vscode.window.showErrorMessage(
+      "LabVoice no aplicó el cambio porque el archivo cambió después de la vista previa.",
+    );
+    return;
+  }
+
+  let validation;
+  try {
+    validation = await postJson(
+      `${backendUrl()}/editor/edit/${operation.id}/validate`,
+      {},
+      300000,
+    );
+  } catch (error) {
+    await reportOperation(operation.id, "failed", {
+      error: `Validation could not run: ${error.message}`,
+    });
+    vscode.window.showErrorMessage(
+      "LabVoice no tocó el archivo porque no pudo ejecutar las pruebas.",
+    );
+    return;
+  }
+
+  if (!validation.success) {
+    await reportOperation(operation.id, "failed", {
+      diagnostics: validation.diagnostics,
+      error: "Tests failed. The original file was not changed.",
+    });
+    vscode.window.showErrorMessage(
+      "Las pruebas fallaron. LabVoice no modificó el archivo original.",
+    );
+    return;
+  }
+
+  await writeBackup(extensionContext, operation);
+  try {
+    await replaceDocument(document, operation.replacement);
+  } catch (error) {
+    if (document.getText() !== operation.original) {
+      await replaceDocument(document, operation.original);
+    }
+    await reportOperation(operation.id, "failed", {
+      diagnostics: validation.diagnostics,
+      error: `Saving failed and the original was restored: ${error.message}`,
+    });
+    vscode.window.showErrorMessage(
+      "No pude guardar el cambio. LabVoice restauró el archivo original.",
+    );
+    return;
+  }
+
+  await reportOperation(operation.id, "applied", {
+    diagnostics: validation.diagnostics,
+  });
+  scheduleSync();
+  vscode.window.showInformationMessage(
+    "Cambio aplicado y guardado. Todas las pruebas pasaron. Puedes decir “Deshacer último cambio”.",
+  );
+}
+
+async function undoOperation(operation) {
+  const document = await vscode.workspace.openTextDocument(
+    vscode.Uri.file(operation.active_file),
+  );
+  await replaceDocument(document, operation.original);
+  await reportOperation(operation.id, "undone");
+  scheduleSync();
+  vscode.window.showInformationMessage(
+    "LabVoice restauró la copia anterior del archivo.",
+  );
+}
+
+async function processNextOperation(extensionContext) {
+  if (processingOperation) return;
+  processingOperation = true;
+  try {
+    const result = await getJson(`${backendUrl()}/editor/operations/next`);
+    const operation = result.operation;
+    if (!operation) return;
+    if (operation.status === "awaiting_preview") {
+      await previewOperation(operation);
+    } else if (operation.status === "approved") {
+      await applyOperation(extensionContext, operation);
+    } else if (operation.status === "undo_requested") {
+      await undoOperation(operation);
+    }
+  } catch (error) {
+    setStatus(false, ` ${error.message}`);
+  } finally {
+    processingOperation = false;
+  }
+}
+
 function describeContext() {
   if (!lastContext) {
     vscode.window.showInformationMessage(
@@ -185,6 +366,11 @@ function activate(extensionContext) {
   statusItem.command = "labvoice.syncContext";
   setStatus(false);
   statusItem.show();
+  const previewProvider = {
+    provideTextDocumentContent(uri) {
+      return previewDocuments.get(uri.toString()) || "";
+    },
+  };
 
   extensionContext.subscriptions.push(
     statusItem,
@@ -198,6 +384,13 @@ function activate(extensionContext) {
       "labvoice.describeContext",
       describeContext,
     ),
+    vscode.commands.registerCommand("labvoice.undoLastEdit", () =>
+      postJson(`${backendUrl()}/editor/edit/undo`, {}),
+    ),
+    vscode.workspace.registerTextDocumentContentProvider(
+      "labvoice-preview",
+      previewProvider,
+    ),
     vscode.window.onDidChangeActiveTextEditor(scheduleSync),
     vscode.window.onDidChangeTextEditorSelection(scheduleSync),
     vscode.workspace.onDidSaveTextDocument(scheduleSync),
@@ -208,10 +401,16 @@ function activate(extensionContext) {
   );
 
   synchronize(false);
+  operationTimer = setInterval(
+    () => processNextOperation(extensionContext),
+    1000,
+  );
+  processNextOperation(extensionContext);
 }
 
 function deactivate() {
   clearTimeout(syncTimer);
+  clearInterval(operationTimer);
 }
 
 module.exports = {

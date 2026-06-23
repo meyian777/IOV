@@ -4,16 +4,21 @@ from pydantic import BaseModel, Field
 
 from openai import OpenAI
 from dotenv import load_dotenv
+import difflib
 import os
+from pathlib import Path
 
 from action_engine import ActionEngine
+from code_edit_planner import CodeEditPlanner
 from code_capability_router import CodeCapabilityRouter
 from diagnostics_runner import DiagnosticsRunner
 from editor_context_store import EditorContextStore
+from editor_operation_store import EditorOperationStore
 from founder_profile_store import FounderProfileStore
 from permission_engine import PermissionEngine
 from project_inspector import ProjectInspector
 from session_store import SessionStore
+from staged_edit_validator import StagedEditValidator
 
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(BACKEND_DIR, ".env"), override=True)
@@ -72,6 +77,17 @@ class EditorContextUpdate(BaseModel):
     cursor_character: int = Field(default=0, ge=0)
 
 
+class EditorEditRequest(BaseModel):
+    instruction: str = Field(min_length=3, max_length=10000)
+    language: str = Field(default="es", min_length=2, max_length=10)
+
+
+class EditorOperationStatus(BaseModel):
+    status: str = Field(min_length=2, max_length=50)
+    diagnostics: dict | None = None
+    error: str | None = Field(default=None, max_length=4000)
+
+
 class SessionUpdate(BaseModel):
     current_goal: str | None = None
     current_task: str | None = None
@@ -92,6 +108,7 @@ SESSION_DATABASE_PATH = os.getenv(
 session_store = SessionStore(SESSION_DATABASE_PATH)
 permission_engine = PermissionEngine()
 editor_context_store = EditorContextStore()
+editor_operation_store = EditorOperationStore()
 
 DEFAULT_PUBLIC_FOUNDER_BIOGRAPHIES = {
     "es": (
@@ -285,6 +302,193 @@ def update_editor_context(request: EditorContextUpdate):
             "workspace_file_count": len(context["workspace_files"]),
             "updated_at": context["updated_at"],
         },
+    }
+
+
+@app.post("/editor/edit/prepare")
+def prepare_editor_edit(request: EditorEditRequest):
+    context = editor_context_store.get()
+    if not context["connected"] or not context["active_file"]:
+        api_error(
+            409,
+            "editor_not_connected",
+            "Open a code file in the connected VS Code window first.",
+        )
+    if not context["document_text"]:
+        api_error(
+            422,
+            "protected_or_empty_file",
+            "The active file is empty or protected from editing.",
+        )
+    try:
+        Path(context["active_file"]).resolve().relative_to(
+            Path(PROJECT_PATH).resolve()
+        )
+    except ValueError:
+        api_error(
+            403,
+            "file_outside_project",
+            "LabVoice may edit only files inside the approved project.",
+        )
+
+    try:
+        plan = CodeEditPlanner.create(client, request.instruction, context)
+    except Exception:
+        api_error(
+            502,
+            "edit_plan_unavailable",
+            "LabVoice could not prepare a safe code edit.",
+        )
+
+    original = context["document_text"]
+    replacement = plan["replacement"]
+    if replacement == original:
+        api_error(
+            422,
+            "no_code_change",
+            "The proposed edit would not change the active file.",
+        )
+
+    diff = "".join(
+        difflib.unified_diff(
+            original.splitlines(keepends=True),
+            replacement.splitlines(keepends=True),
+            fromfile=f"{context['relative_file']} (current)",
+            tofile=f"{context['relative_file']} (proposed)",
+        )
+    )
+    operation = editor_operation_store.create(
+        instruction=request.instruction,
+        active_file=context["active_file"],
+        relative_file=context["relative_file"],
+        language_id=context["language_id"],
+        original=original,
+        replacement=replacement,
+        summary=plan["summary"],
+        diff=diff,
+    )
+    return {
+        "success": True,
+        "operation_id": operation["id"],
+        "status": operation["status"],
+        "summary": operation["summary"],
+        "relative_file": operation["relative_file"],
+        "diff": operation["diff"][:20_000],
+        "message": (
+            "The exact change is opening in VS Code. Review it, then say "
+            "'sí, aplicar' or 'cancelar'."
+        ),
+    }
+
+
+@app.get("/editor/operations/next")
+def next_editor_operation():
+    return {
+        "success": True,
+        "operation": editor_operation_store.next_for_extension(),
+    }
+
+
+@app.post("/editor/operations/{operation_id}/status")
+def update_editor_operation(
+    operation_id: str,
+    request: EditorOperationStatus,
+):
+    allowed = {
+        "previewed",
+        "applied",
+        "failed",
+        "canceled",
+        "undone",
+    }
+    if request.status not in allowed:
+        api_error(422, "invalid_operation_status", "Invalid editor status.")
+    operation = editor_operation_store.update(
+        operation_id,
+        request.status,
+        diagnostics=request.diagnostics,
+        error=request.error,
+    )
+    if operation is None:
+        api_error(404, "edit_not_found", "The edit operation was not found.")
+    return {"success": True, "operation": operation}
+
+
+@app.post("/editor/edit/{operation_id}/confirm")
+def confirm_editor_edit(operation_id: str):
+    operation = editor_operation_store.get(operation_id)
+    if operation is None:
+        api_error(404, "edit_not_found", "The edit operation was not found.")
+    if operation["status"] != "previewed":
+        api_error(
+            409,
+            "preview_required",
+            "Review the exact change in VS Code before applying it.",
+        )
+    operation = editor_operation_store.update(operation_id, "approved")
+    return {
+        "success": True,
+        "status": operation["status"],
+        "message": (
+            "Edit approved. LabVoice is applying it, running tests, and will "
+            "restore the original automatically if validation fails."
+        ),
+    }
+
+
+@app.get("/editor/edit/{operation_id}")
+def get_editor_edit(operation_id: str):
+    operation = editor_operation_store.get(operation_id)
+    if operation is None:
+        api_error(404, "edit_not_found", "The edit operation was not found.")
+    diagnostics = operation.get("diagnostics") or {}
+    return {
+        "success": True,
+        "operation": {
+            "id": operation["id"],
+            "status": operation["status"],
+            "summary": operation["summary"],
+            "relative_file": operation["relative_file"],
+            "diagnostics": diagnostics,
+            "error": operation.get("error"),
+        },
+    }
+
+
+@app.post("/editor/edit/{operation_id}/cancel")
+def cancel_editor_edit(operation_id: str):
+    operation = editor_operation_store.get(operation_id)
+    if operation is None:
+        api_error(404, "edit_not_found", "The edit operation was not found.")
+    if operation["status"] not in {"awaiting_preview", "previewed"}:
+        api_error(409, "edit_not_cancelable", "This edit cannot be canceled.")
+    editor_operation_store.update(operation_id, "canceled")
+    return {"success": True, "message": "The proposed edit was canceled."}
+
+
+@app.post("/editor/edit/{operation_id}/validate")
+def validate_editor_edit(operation_id: str):
+    operation = editor_operation_store.get(operation_id)
+    if operation is None:
+        api_error(404, "edit_not_found", "The edit operation was not found.")
+    if operation["status"] != "approved":
+        api_error(409, "edit_not_approved", "The edit has not been approved.")
+    diagnostics = StagedEditValidator.run(PROJECT_PATH, operation)
+    return {
+        "success": diagnostics.get("success", False),
+        "diagnostics": diagnostics,
+    }
+
+
+@app.post("/editor/edit/undo")
+def undo_last_editor_edit():
+    operation = editor_operation_store.request_undo()
+    if operation is None:
+        api_error(409, "nothing_to_undo", "There is no applied edit to undo.")
+    return {
+        "success": True,
+        "operation_id": operation["id"],
+        "message": "Restoring the previous version in VS Code.",
     }
 
 

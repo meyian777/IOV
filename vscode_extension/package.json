@@ -28,6 +28,10 @@
       {
         "command": "labvoice.describeContext",
         "title": "LabVoice: Describe Current Context"
+      },
+      {
+        "command": "labvoice.undoLastEdit",
+        "title": "LabVoice: Undo Last Applied Edit"
       }
     ],
     "configuration": {
