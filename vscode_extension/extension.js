@@ -62,6 +62,19 @@ function isLocalFile(document) {
   return document && document.uri.scheme === "file";
 }
 
+function isSensitivePath(filePath) {
+  const normalized = String(filePath || "").replaceAll("\\", "/").toLowerCase();
+  const name = normalized.split("/").pop() || "";
+  return (
+    name === ".env" ||
+    name.startsWith(".env.") ||
+    /\.(pem|key|p12|pfx|jks|keystore|enc)$/.test(name) ||
+    /(^|[/_.-])(secret|secrets|credential|credentials)([/_.-]|$)/.test(
+      normalized,
+    )
+  );
+}
+
 async function collectContext() {
   const configuration = vscode.workspace.getConfiguration("labvoice");
   const maxFiles = configuration.get("maxWorkspaceFiles", 5000);
@@ -69,13 +82,16 @@ async function collectContext() {
   const workspaceRoots = workspaceFolders.map((folder) => folder.uri.fsPath);
   const files = await vscode.workspace.findFiles(
     "**/*",
-    "**/{.git,node_modules,.dart_tool,build,venv,.venv,__pycache__}/**",
+    "**/{.git,node_modules,.dart_tool,build,venv,.venv,__pycache__,Pods,ephemeral,.idea}/**",
     maxFiles,
   );
   const editor = vscode.window.activeTextEditor;
   const document = editor && isLocalFile(editor.document)
     ? editor.document
     : null;
+  const activeFileIsSensitive = document
+    ? isSensitivePath(document.uri.fsPath)
+    : false;
   const selection = editor && document ? editor.selection : null;
   const openFiles = vscode.workspace.textDocuments
     .filter(isLocalFile)
@@ -84,18 +100,21 @@ async function collectContext() {
 
   return {
     workspace_roots: workspaceRoots,
-    workspace_files: files.map((uri) =>
-      vscode.workspace.asRelativePath(uri, false),
-    ),
+    workspace_files: files
+      .filter((uri) => !isSensitivePath(uri.fsPath))
+      .map((uri) => vscode.workspace.asRelativePath(uri, false)),
     open_files: openFiles,
     active_file: document ? document.uri.fsPath : "",
     relative_file: document
       ? vscode.workspace.asRelativePath(document.uri, false)
       : "",
     language_id: document ? document.languageId : "",
-    document_text: document ? document.getText().slice(0, 100000) : "",
+    document_text:
+      document && !activeFileIsSensitive
+        ? document.getText().slice(0, 100000)
+        : "",
     selected_text:
-      document && selection
+      document && selection && !activeFileIsSensitive
         ? document.getText(selection).slice(0, 20000)
         : "",
     cursor_line: selection ? selection.active.line : 0,

@@ -10,7 +10,8 @@ This local extension gives LabVoice read-only context from Visual Studio Code:
 It does not edit, delete, or run files. The extension sends editor context only
 to the configured local LabVoice backend. When the user asks LabVoice a
 question, that backend may send the relevant active context to its configured
-AI provider.
+AI provider. Environment files, private keys, certificates, encrypted files,
+and common credential files are excluded automatically.
 
 ## Run for development
 
