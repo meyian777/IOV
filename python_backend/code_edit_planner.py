@@ -13,7 +13,7 @@ class CodeEditPlanner:
                 {
                     "role": "system",
                     "content": (
-                        "You are LabVoice's code editing planner. Return only "
+                        "You are OSvoz's code editing planner. Return only "
                         "valid JSON with exactly two string fields: summary and "
                         "replacement. replacement must contain the complete "
                         "new contents of the active file. Preserve unrelated "

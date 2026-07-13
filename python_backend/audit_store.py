@@ -50,6 +50,7 @@ class AuditStore:
             separators=(",", ":"),
         )
         with self._lock, self._connect() as connection:
+            self._initialize_connection(connection)
             row = connection.execute(
                 "SELECT event_hash FROM audit_events ORDER BY id DESC LIMIT 1"
             ).fetchone()
@@ -95,6 +96,7 @@ class AuditStore:
 
     def verify(self) -> dict:
         with self._connect() as connection:
+            self._initialize_connection(connection)
             rows = connection.execute(
                 "SELECT * FROM audit_events ORDER BY id"
             ).fetchall()
@@ -120,6 +122,22 @@ class AuditStore:
             "event_count": len(rows),
             "head_hash": previous_hash,
         }
+
+    @staticmethod
+    def _initialize_connection(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS audit_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                occurred_at TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                outcome TEXT NOT NULL,
+                metadata_json TEXT NOT NULL,
+                previous_hash TEXT NOT NULL,
+                event_hash TEXT NOT NULL UNIQUE
+            )
+            """
+        )
 
     @staticmethod
     def _event_hash(

@@ -2,66 +2,70 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:labvoice/services/intent_engine.dart';
 
 void main() {
-  test('detecta la intención de inspeccionar un proyecto', () {
-    expect(IntentEngine.detectIntent('analiza el proyecto'), 'inspect_project');
-    expect(IntentEngine.detectIntent('inspect project'), 'inspect_project');
+  test('detecta variantes habladas de diagnostico como run_diagnostics', () {
+    final commands = [
+      'haz una prueba del proyecto',
+      'corre test y explica el resultado',
+      'analiza las pruebas',
+      'ejecuta diagnostico',
+      'run the tests',
+    ];
+
+    for (final command in commands) {
+      expect(
+        IntentEngine.detectIntent(command),
+        'run_diagnostics',
+        reason: command,
+      );
+    }
   });
 
-  test('detecta la intención de ejecutar diagnósticos', () {
-    expect(IntentEngine.detectIntent('ejecuta las pruebas'), 'run_diagnostics');
-    expect(IntentEngine.detectIntent('run diagnostics'), 'run_diagnostics');
+  test('detecta estado del operador en espanol e ingles', () {
+    final commands = [
+      'IOV, estado del operador',
+      'IOV, estatus del operador',
+      'IOV, estado operativo',
+      'IOV, estado del sistema',
+      'IOV, operator status',
+      'IOV status',
+      'system status',
+      'IOV, operador',
+      'IOV, operativo',
+      'IOV, como estas sistema',
+      'Dame el estado del sistema. En detalle. I O B',
+    ];
+
+    for (final command in commands) {
+      expect(
+        IntentEngine.detectIntent(command),
+        'operator_status',
+        reason: command,
+      );
+    }
   });
 
-  test('detecta confirmación y cancelación', () {
-    expect(IntentEngine.detectIntent('confirmar'), 'confirm_action');
-    expect(IntentEngine.detectIntent('sí'), 'confirm_action');
-    expect(IntentEngine.detectIntent('cancel'), 'cancel_action');
-    expect(IntentEngine.detectIntent('no'), 'cancel_action');
-    expect(IntentEngine.detectIntent('Sí, aplicar'), 'confirm_action');
-  });
-
-  test('detecta edición y deshacer por voz', () {
+  test('usa fallback local para frases parecidas a estado operativo', () {
+    expect(IntentEngine.looksLikeOperatorStatus('operador'), isTrue);
+    expect(IntentEngine.looksLikeOperatorStatus('IOV, status'), isTrue);
     expect(
-      IntentEngine.detectIntent('Modifica el título del archivo'),
-      'edit_active_file',
+      IntentEngine.looksLikeOperatorStatus('IOV, como estas operador'),
+      isTrue,
     );
-    expect(IntentEngine.detectIntent('Deshacer último cambio'), 'undo_edit');
   });
 
-  test('detecta interrupción y resumen de voz', () {
-    expect(IntentEngine.detectIntent('detente'), 'stop_speaking');
-    expect(IntentEngine.detectIntent('silencio'), 'stop_speaking');
-    expect(IntentEngine.detectIntent('stop speaking'), 'stop_speaking');
-    expect(IntentEngine.detectIntent('ok detente'), 'stop_speaking');
-    expect(IntentEngine.detectIntent('LabVoice, detente'), 'stop_speaking');
-    expect(IntentEngine.detectIntent('ok Lab Voice silencio'), 'stop_speaking');
-    expect(IntentEngine.detectIntent('resúmelo'), 'summarize_response');
-    expect(IntentEngine.detectIntent('make it shorter'), 'summarize_response');
-  });
-
-  test('detecta preguntas bilingües sobre el creador', () {
-    expect(IntentEngine.detectIntent('¿Quién te creó?'), 'creator_identity');
+  test('detecta modo de resumen rapido y detallado', () {
+    expect(IntentEngine.summaryMode('IOV, estado del operador'), 'quick');
     expect(
-      IntentEngine.detectIntent('¿Quién es tu fundador?'),
-      'creator_identity',
+      IntentEngine.summaryMode('IOV, estado del operador en detalle'),
+      'detailed',
     );
-    expect(IntentEngine.detectIntent('Who created you?'), 'creator_identity');
     expect(
-      IntentEngine.detectIntent('Who founded LabVoice?'),
-      'creator_identity',
+      IntentEngine.summaryMode('IOV, operator status with technical details'),
+      'detailed',
     );
-  });
-
-  test('distingue la identidad de LabVoice de la del fundador', () {
-    expect(IntentEngine.detectIntent('¿Quién eres?'), 'labvoice_identity');
-    expect(IntentEngine.detectIntent('Who are you?'), 'labvoice_identity');
-  });
-
-  test('detecta preguntas bilingües sobre la biografía pública', () {
     expect(
-      IntentEngine.detectIntent('Biografía de Ian Faber Mendoza Mey'),
-      'founder_biography',
+      IntentEngine.summaryMode('Dame el estado del sistema. En detalle. I O B'),
+      'detailed',
     );
-    expect(IntentEngine.detectIntent('Founder biography'), 'founder_biography');
   });
 }

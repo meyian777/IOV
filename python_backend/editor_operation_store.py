@@ -29,11 +29,28 @@ class EditorOperationStore:
         replacement: str,
         summary: str,
         diff: str,
+        files: list[dict] | None = None,
     ) -> dict:
         operation_id = secrets.token_urlsafe(18)
+        operation_files = files or [
+            {
+                "active_file": active_file,
+                "relative_file": relative_file,
+                "language_id": language_id,
+                "original": original,
+                "original_hash": sha256(original.encode()).hexdigest(),
+                "replacement": replacement,
+                "summary": summary,
+                "diff": diff,
+            }
+        ]
         operation = {
             "id": operation_id,
-            "type": "replace_active_document",
+            "type": (
+                "replace_multiple_documents"
+                if len(operation_files) > 1
+                else "replace_active_document"
+            ),
             "status": "awaiting_preview",
             "instruction": instruction,
             "active_file": active_file,
@@ -44,6 +61,7 @@ class EditorOperationStore:
             "replacement": replacement,
             "summary": summary,
             "diff": diff,
+            "files": operation_files,
             "diagnostics": None,
             "error": None,
             "created_at": datetime.now(timezone.utc).isoformat(),

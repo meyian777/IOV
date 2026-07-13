@@ -16,9 +16,11 @@ class ChatApiTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 422)
 
-    @patch("main.client.responses.create")
-    def test_ai_failure_returns_safe_gateway_error(self, create):
-        create.side_effect = RuntimeError("secret provider details")
+    @patch("main.openai_client")
+    def test_ai_failure_returns_safe_gateway_error(self, openai_client):
+        openai_client.return_value.responses.create.side_effect = RuntimeError(
+            "secret provider details"
+        )
 
         response = TestClient(app).post(
             "/chat",
@@ -32,8 +34,9 @@ class ChatApiTest(unittest.TestCase):
         )
         self.assertNotIn("secret provider details", response.text)
 
-    @patch("main.client.responses.create")
-    def test_chat_receives_language_and_session_context(self, create):
+    @patch("main.openai_client")
+    def test_chat_receives_language_and_session_context(self, openai_client):
+        create = openai_client.return_value.responses.create
         create.return_value.output_text = "Entendido."
 
         response = TestClient(app).post(
@@ -86,8 +89,9 @@ class ChatApiTest(unittest.TestCase):
         self.assertEqual(context["relative_file"], "lib/main.dart")
         self.assertEqual(context["workspace_file_count"], 2)
 
-    @patch("main.client.responses.create")
-    def test_chat_receives_current_vscode_context(self, create):
+    @patch("main.openai_client")
+    def test_chat_receives_current_vscode_context(self, openai_client):
+        create = openai_client.return_value.responses.create
         create.return_value.output_text = "Este archivo inicia la aplicación."
         client = TestClient(app)
         client.post(
@@ -116,8 +120,9 @@ class ChatApiTest(unittest.TestCase):
         self.assertTrue(response.json()["editor"]["connected"])
         self.assertEqual(response.json()["routing"]["language"], "dart")
 
-    @patch("main.client.responses.create")
-    def test_chat_receives_previous_conversational_turn(self, create):
+    @patch("main.openai_client")
+    def test_chat_receives_previous_conversational_turn(self, openai_client):
+        create = openai_client.return_value.responses.create
         create.return_value.output_text = "Primera respuesta."
         client = TestClient(app)
         client.post(
@@ -135,8 +140,9 @@ class ChatApiTest(unittest.TestCase):
         self.assertIn("Recuerda esta tarea", system_content)
         self.assertIn("Primera respuesta.", system_content)
 
-    @patch("main.client.audio.speech.create")
-    def test_speech_returns_natural_voice_audio(self, create):
+    @patch("main.openai_client")
+    def test_speech_returns_natural_voice_audio(self, openai_client):
+        create = openai_client.return_value.audio.speech.create
         create.return_value.content = b"ID3-test-audio"
 
         response = TestClient(app).post(
@@ -153,9 +159,11 @@ class ChatApiTest(unittest.TestCase):
             create.call_args.kwargs["instructions"],
         )
 
-    @patch("main.client.audio.speech.create")
-    def test_speech_failure_does_not_expose_provider_details(self, create):
-        create.side_effect = RuntimeError("secret provider details")
+    @patch("main.openai_client")
+    def test_speech_failure_does_not_expose_provider_details(self, openai_client):
+        openai_client.return_value.audio.speech.create.side_effect = RuntimeError(
+            "secret provider details"
+        )
 
         response = TestClient(app).post(
             "/speech",

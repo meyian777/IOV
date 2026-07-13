@@ -7,6 +7,7 @@ class EditorContextStore:
     MAX_WORKSPACE_ROOTS = 10
     MAX_WORKSPACE_FILES = 5000
     MAX_OPEN_FILES = 100
+    MAX_DIAGNOSTICS = 50
     MAX_DOCUMENT_TEXT = 100_000
     MAX_SELECTED_TEXT = 20_000
 
@@ -18,16 +19,26 @@ class EditorContextStore:
     def _empty_context() -> dict:
         return {
             "connected": False,
+            "workspace_name": "",
             "workspace_roots": [],
             "workspace_files": [],
             "open_files": [],
             "active_file": "",
             "relative_file": "",
             "language_id": "",
+            "document_version": 0,
+            "document_hash": "",
             "document_text": "",
             "selected_text": "",
             "cursor_line": 0,
             "cursor_character": 0,
+            "selection_start_line": 0,
+            "selection_start_character": 0,
+            "selection_end_line": 0,
+            "selection_end_character": 0,
+            "visible_start_line": 0,
+            "visible_end_line": 0,
+            "diagnostics": [],
             "updated_at": None,
         }
 
@@ -45,9 +56,41 @@ class EditorContextStore:
             if value
         ]
 
+    @classmethod
+    def _bounded_diagnostics(cls, values) -> list[dict]:
+        if not isinstance(values, list):
+            return []
+        diagnostics = []
+        for item in values[: cls.MAX_DIAGNOSTICS]:
+            if not isinstance(item, dict):
+                continue
+            diagnostics.append(
+                {
+                    "severity": max(0, int(item.get("severity") or 0)),
+                    "message": cls._bounded_text(item.get("message"), 1000),
+                    "source": cls._bounded_text(item.get("source"), 100),
+                    "code": cls._bounded_text(item.get("code"), 200),
+                    "start_line": max(0, int(item.get("start_line") or 0)),
+                    "start_character": max(
+                        0,
+                        int(item.get("start_character") or 0),
+                    ),
+                    "end_line": max(0, int(item.get("end_line") or 0)),
+                    "end_character": max(
+                        0,
+                        int(item.get("end_character") or 0),
+                    ),
+                }
+            )
+        return diagnostics
+
     def update(self, values: dict) -> dict:
         context = {
             "connected": True,
+            "workspace_name": self._bounded_text(
+                values.get("workspace_name"),
+                200,
+            ),
             "workspace_roots": self._bounded_list(
                 values.get("workspace_roots"),
                 self.MAX_WORKSPACE_ROOTS,
@@ -75,6 +118,11 @@ class EditorContextStore:
                 values.get("language_id"),
                 100,
             ),
+            "document_version": max(0, int(values.get("document_version") or 0)),
+            "document_hash": self._bounded_text(
+                values.get("document_hash"),
+                128,
+            ),
             "document_text": self._bounded_text(
                 values.get("document_text"),
                 self.MAX_DOCUMENT_TEXT,
@@ -88,6 +136,31 @@ class EditorContextStore:
                 0,
                 int(values.get("cursor_character") or 0),
             ),
+            "selection_start_line": max(
+                0,
+                int(values.get("selection_start_line") or 0),
+            ),
+            "selection_start_character": max(
+                0,
+                int(values.get("selection_start_character") or 0),
+            ),
+            "selection_end_line": max(
+                0,
+                int(values.get("selection_end_line") or 0),
+            ),
+            "selection_end_character": max(
+                0,
+                int(values.get("selection_end_character") or 0),
+            ),
+            "visible_start_line": max(
+                0,
+                int(values.get("visible_start_line") or 0),
+            ),
+            "visible_end_line": max(
+                0,
+                int(values.get("visible_end_line") or 0),
+            ),
+            "diagnostics": self._bounded_diagnostics(values.get("diagnostics")),
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         with self._lock:
@@ -104,15 +177,33 @@ class EditorContextStore:
             return "VS Code bridge: disconnected."
 
         workspace_files = "\n".join(context.get("workspace_files", []))
+        diagnostics = "\n".join(
+            (
+                f"- severity={item.get('severity')} "
+                f"line={item.get('start_line', 0) + 1}: "
+                f"{item.get('message', '')}"
+            )
+            for item in context.get("diagnostics", [])
+        )
         return (
             "VS Code bridge: connected.\n"
+            f"Workspace name: {context.get('workspace_name', '')}\n"
             f"Workspace roots: {context.get('workspace_roots', [])}\n"
             f"Active file: {context.get('active_file', '')}\n"
             f"Relative file: {context.get('relative_file', '')}\n"
             f"Language: {context.get('language_id', '')}\n"
+            f"Document version: {context.get('document_version', 0)}\n"
+            f"Document hash: {context.get('document_hash', '')}\n"
             f"Cursor: line {context.get('cursor_line', 0) + 1}, "
             f"character {context.get('cursor_character', 0) + 1}\n"
+            f"Selection: line {context.get('selection_start_line', 0) + 1}:"
+            f"{context.get('selection_start_character', 0) + 1} to "
+            f"line {context.get('selection_end_line', 0) + 1}:"
+            f"{context.get('selection_end_character', 0) + 1}\n"
+            f"Visible lines: {context.get('visible_start_line', 0) + 1}-"
+            f"{context.get('visible_end_line', 0) + 1}\n"
             f"Open files: {context.get('open_files', [])}\n"
+            f"Diagnostics:\n{diagnostics}\n"
             f"Selected text:\n{context.get('selected_text', '')}\n"
             f"Active document:\n{context.get('document_text', '')}\n"
             f"Workspace file map:\n{workspace_files[:50_000]}"

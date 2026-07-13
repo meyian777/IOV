@@ -17,7 +17,7 @@ class FounderProfileStoreTest(unittest.TestCase):
             )
             profile = {
                 "full_name": "Ian Faber Mendoza Mey",
-                "public_biography": "Founder of LabVoice.",
+                "public_biography": "Founder of OSvoz.",
             }
 
             store.save(profile)

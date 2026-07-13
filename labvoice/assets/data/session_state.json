@@ -1,8 +1,8 @@
 {
-  "current_goal": "Build LabVoice Developer OS",
-  "current_task": "Connect persistent session memory",
-  "last_action": "Project Inspector completed",
-  "next_action": "Start the LabVoice backend",
+  "current_goal": "Build iVOZ Developer OS",
+  "current_task": "Stress test ML provider compatibility",
+  "last_action": "PyTorch rejected for the main backend venv",
+  "next_action": "Create isolated ML runtime for provider-backed embeddings",
   "working_mode": "developer",
   "active_project": "ian_labvoice",
   "updated_at": ""

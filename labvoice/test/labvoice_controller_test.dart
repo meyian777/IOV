@@ -5,7 +5,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test('controller owns observable command center state', () {
-    final controller = LabVoiceController();
+    final controller = OSvozController();
     var notifications = 0;
     controller.addListener(() => notifications++);
 
@@ -18,7 +18,7 @@ void main() {
   });
 
   test('controller exposes automatic and manual language profiles', () {
-    final controller = LabVoiceController();
+    final controller = OSvozController();
 
     expect(controller.languages['Automático'], 'auto');
     expect(controller.activeLanguageName, 'Español');
@@ -27,7 +27,7 @@ void main() {
   });
 
   test('controller exposes speech recognition failures', () async {
-    final controller = LabVoiceController();
+    final controller = OSvozController();
 
     await controller.speechRecognitionError('error_audio');
 
@@ -36,8 +36,23 @@ void main() {
     expect(controller.technicalAction, 'error_audio');
   });
 
+  test('controller hides local Whisper infrastructure details', () async {
+    final controller = OSvozController();
+
+    await controller.speechRecognitionError(
+      'Local transcription failed: /opt/homebrew/Cellar/ggml/0.15.2/libexec/libggml-blas.so '
+      'load_backend: loaded MTL backend error: failed to initialize whisper context',
+    );
+
+    expect(controller.isListening, isFalse);
+    expect(controller.detectedIntent, 'speech_recognition_error');
+    expect(controller.response, isNot(contains('/opt/homebrew')));
+    expect(controller.response, isNot(contains('libggml')));
+    expect(controller.response, contains('Whisper local no pudo iniciar'));
+  });
+
   test('controller marks ambient speech as ignored without answering', () {
-    final controller = LabVoiceController();
+    final controller = OSvozController();
 
     controller.ambientSpeechIgnored('conversación de fondo');
 

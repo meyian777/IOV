@@ -3,14 +3,33 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../services/action_executor.dart';
+import '../services/audit_log_service.dart';
+import '../services/conversational_presence.dart';
+import '../services/device_trust_service.dart';
 import '../services/intent_engine.dart';
+import '../services/intent_orchestrator.dart';
 import '../services/labvoice_api.dart';
 import '../services/language_manager.dart';
+import '../services/operator_capability_service.dart';
+import '../services/operator_status_service.dart';
 import '../services/project_memory.dart';
 import '../services/session_memory.dart';
 import '../services/voice_engine.dart';
+import '../services/voice_latency_metrics.dart';
 
-class LabVoiceController extends ChangeNotifier {
+class _OrchestratedTaskResult {
+  final String label;
+  final bool success;
+  final String message;
+
+  const _OrchestratedTaskResult({
+    required this.label,
+    required this.success,
+    required this.message,
+  });
+}
+
+class OSvozController extends ChangeNotifier {
   bool isListening = false;
   String selectedLanguageCode = "auto";
   String selectedLanguageName = "Automático";
@@ -19,12 +38,15 @@ class LabVoiceController extends ChangeNotifier {
   String detectedIntent = "Esperando un comando";
   String technicalAction = "Sin acciones pendientes";
   String securityLevel = "Seguro";
+  String operatorStatus = "Operador listo";
 
   String? _pendingConfirmationToken;
   String? _pendingActionName;
   String? _pendingEditOperationId;
   Timer? _progressTimer;
   int _progressGeneration = 0;
+  int _presenceTurn = 0;
+  DateTime? _commandStartedAt;
 
   String get activeLanguageName {
     if (selectedLanguageCode != "auto") return selectedLanguageName;
@@ -88,25 +110,60 @@ class LabVoiceController extends ChangeNotifier {
     heardCommand = transcript;
     detectedIntent = "ambient_speech_ignored";
     technicalAction =
-        "Speech was not addressed to LabVoice and was safely ignored.";
+        "Speech was not addressed to OSvoz and was safely ignored.";
     securityLevel = "Wake word required";
     notifyListeners();
   }
 
   Future<void> speechRecognitionError(String error) async {
+    final safeError = _safeSpeechRecognitionError(error);
     isListening = false;
     heardCommand = LanguageManager.text(
       "No se recibió ningún comando.",
       "No command was received.",
     );
     response = LanguageManager.text(
-      "El reconocimiento de voz falló: $error",
-      "Speech recognition failed: $error",
+      "El reconocimiento de voz falló: $safeError",
+      "Speech recognition failed: $safeError",
     );
     detectedIntent = "speech_recognition_error";
-    technicalAction = error;
+    technicalAction = safeError;
     securityLevel = "Blocked";
     notifyListeners();
+    unawaited(_speakResponse(response));
+  }
+
+  static String _safeSpeechRecognitionError(String error) {
+    final normalized = error.replaceAll(RegExp(r"\s+"), " ").trim();
+    if (normalized.isEmpty) {
+      return LanguageManager.text(
+        "No detecté voz. Intenta de nuevo.",
+        "I did not detect speech. Try again.",
+      );
+    }
+    final lower = normalized.toLowerCase();
+    if (lower.contains("ggml_") ||
+        lower.contains("_rsets_init") ||
+        lower.contains("libggml") ||
+        lower.contains("load_backend") ||
+        lower.contains("/opt/homebrew") ||
+        lower.contains("metal_device") ||
+        lower.contains("gpu name") ||
+        lower.contains("failed to initialize whisper context") ||
+        lower.contains("local whisper could not initialize")) {
+      return LanguageManager.text(
+        "Whisper local no pudo iniciar. Intenta de nuevo; usaré reconocimiento nativo como respaldo.",
+        "Local Whisper could not start. Try again; I will use native recognition as backup.",
+      );
+    }
+    if (lower.contains("no speech")) {
+      return LanguageManager.text(
+        "No detecté voz. Intenta de nuevo.",
+        "I did not detect speech. Try again.",
+      );
+    }
+    if (normalized.length <= 180) return normalized;
+    return "${normalized.substring(0, 177)}...";
   }
 
   void updatePartialTranscript(String text) {
@@ -114,27 +171,50 @@ class LabVoiceController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void processingCapturedVoice() {
+    final feedbackStopwatch = Stopwatch()..start();
+    isListening = false;
+    response = LanguageManager.text("Ya te escuché.", "I heard you.");
+    detectedIntent = "voice_processing";
+    technicalAction = "Audio captured; transcription is running.";
+    securityLevel = "Secure";
+    notifyListeners();
+    feedbackStopwatch.stop();
+    VoiceLatencyMetrics.record("feedback_ms", feedbackStopwatch.elapsed);
+    unawaited(_speakResponse(response));
+  }
+
   Future<void> microphoneUnavailable() async {
     await _update(
       heard: "Microphone unavailable.",
       response: LanguageManager.text(
-        "No pude activar el micrófono, Ian.",
-        "I could not activate the microphone, Ian.",
+        "No pude activar el micrófono, Ian. Revisa Ajustes del Sistema > Privacidad y seguridad > Micrófono, habilita OSvoz y reinicia la app.",
+        "I could not activate the microphone, Ian. Check System Settings > Privacy & Security > Microphone, enable OSvoz and restart the app.",
       ),
       intent: "microphone_error",
-      action: "Check browser or system permissions.",
+      action: "Check macOS microphone permission and restart OSvoz.",
       security: "Secure",
     );
   }
 
   Future<void> processCommand(String rawCommand) async {
-    if (LanguageManager.current.languageTag == "auto") {
-      LanguageManager.alignToText(rawCommand);
-      await VoiceEngine.setLanguage(LanguageManager.activeVoiceLocale);
-    }
+    _commandStartedAt = DateTime.now();
+    final languageStopwatch = Stopwatch()..start();
+    LanguageManager.alignToText(rawCommand);
+    languageStopwatch.stop();
+    VoiceLatencyMetrics.record(
+      "language_detection_ms",
+      languageStopwatch.elapsed,
+    );
+    await VoiceEngine.setLanguage(LanguageManager.activeVoiceLocale);
+    selectedLanguageCode = LanguageManager.current.recognitionLocale ?? "auto";
+    selectedLanguageName = LanguageManager.current.name;
 
     final command = rawCommand.toLowerCase().trim();
+    final intentStopwatch = Stopwatch()..start();
     final intent = IntentEngine.detectIntent(command);
+    intentStopwatch.stop();
+    VoiceLatencyMetrics.record("intent_ms", intentStopwatch.elapsed);
 
     if (intent == "stop_speaking") {
       await _stopSpeaking(rawCommand);
@@ -160,6 +240,16 @@ class LabVoiceController extends ChangeNotifier {
       await _cancelPendingAction(rawCommand);
       return;
     }
+    if (_requestsPendingExecution(command)) {
+      if (_pendingEditOperationId != null) {
+        await _confirmPendingEdit(rawCommand);
+        return;
+      }
+      if (_pendingConfirmationToken != null) {
+        await _confirmPendingAction(rawCommand);
+        return;
+      }
+    }
     if (command.isEmpty) {
       await _update(
         heard: "No clear command detected.",
@@ -175,8 +265,25 @@ class LabVoiceController extends ChangeNotifier {
       return;
     }
 
+    final orchestrationStopwatch = Stopwatch()..start();
+    final plan = IntentOrchestrator.plan(rawCommand);
+    orchestrationStopwatch.stop();
+    VoiceLatencyMetrics.record(
+      "orchestration_ms",
+      orchestrationStopwatch.elapsed,
+    );
+    if (plan.tasks.isNotEmpty) {
+      await _runOrchestratedPlan(rawCommand, plan);
+      return;
+    }
+    if (intent == "operator_status" ||
+        IntentEngine.looksLikeOperatorStatus(rawCommand)) {
+      await _operatorStatus(rawCommand);
+      return;
+    }
+
     switch (intent) {
-      case "labvoice_identity":
+      case "osvoz_identity":
         await _labVoiceIdentity(rawCommand);
         return;
       case "creator_identity":
@@ -187,6 +294,9 @@ class LabVoiceController extends ChangeNotifier {
         return;
       case "inspect_project":
         await _inspectProject(rawCommand);
+        return;
+      case "read_project_file":
+        await _readProjectFile(rawCommand);
         return;
       case "run_diagnostics":
         await _runDiagnostics(rawCommand);
@@ -209,13 +319,30 @@ class LabVoiceController extends ChangeNotifier {
       case "run_flutter":
         await _requestAction(rawCommand, intent, "RUN_FLUTTER");
         return;
+      case "open_browser":
+        await _openBrowser(rawCommand);
+        return;
+      case "youtube_music":
+        await _openYouTubeMusic(rawCommand);
+        return;
+      case "skip_ad":
+        await _skipAdGuidance(rawCommand);
+        return;
       case "open_terminal":
         await _requestAction(rawCommand, intent, "OPEN_TERMINAL");
         return;
       case "list_files":
-        await _requestAction(rawCommand, intent, "LIST_FILES");
+        await _listProjectFiles(rawCommand);
         return;
       default:
+        if (IntentEngine.looksLikeOperatorStatus(rawCommand)) {
+          await _operatorStatus(rawCommand);
+          return;
+        }
+        if (IntentOrchestrator.looksLikeMusicRequest(rawCommand)) {
+          await _musicNeedsClarification(rawCommand);
+          return;
+        }
         await _runChat(rawCommand, rawCommand);
         return;
     }
@@ -226,17 +353,28 @@ class LabVoiceController extends ChangeNotifier {
       heard: rawCommand,
       response: LanguageManager.creatorIdentity(),
       intent: "creator_identity",
-      action: "Presented official LabVoice founder identity.",
+      action: "Presented official OSvoz founder identity.",
       security: "Public identity",
     );
   }
+
+  bool _requestsPendingExecution(String command) =>
+      command == "ejecutalo" ||
+      command == "ejecútalo" ||
+      command == "hazlo" ||
+      command == "dale" ||
+      command == "aplicalo" ||
+      command == "aplícalo" ||
+      command == "execute it" ||
+      command == "do it" ||
+      command == "go ahead";
 
   Future<void> _labVoiceIdentity(String rawCommand) async {
     await _update(
       heard: rawCommand,
       response: LanguageManager.labVoiceIdentity(),
-      intent: "labvoice_identity",
-      action: "Presented LabVoice system identity.",
+      intent: "osvoz_identity",
+      action: "Presented OSvoz system identity.",
       security: "Public identity",
     );
   }
@@ -249,6 +387,44 @@ class LabVoiceController extends ChangeNotifier {
       action: "Presented approved public founder biography.",
       security: "Public identity",
     );
+  }
+
+  Future<void> _operatorStatus(String rawCommand) async {
+    _showStatus(
+      heard: rawCommand,
+      response: LanguageManager.text(
+        "Revisando estado operativo.",
+        "Checking operator status.",
+      ),
+      intent: "operator_status_pending",
+      action: "Fetching /core/operator-status.",
+      security: "Read only audit event",
+      operatorStatus: "Revisando operador",
+    );
+    try {
+      final summaryMode = IntentEngine.summaryMode(rawCommand);
+      final status = await OperatorStatusService.fetch(
+        summaryMode: summaryMode,
+      );
+      await _update(
+        heard: rawCommand,
+        response: status.spokenSummary,
+        intent: "operator_status",
+        action:
+            "Operator status checked in ${status.summaryMode} mode: ${status.implementedCount} ready, ${status.partialCount} partial.",
+        security: status.auditValid ? "Audited read only" : "Audit degraded",
+        operatorStatus: status.ready ? "Operador listo" : "Operador parcial",
+      );
+    } on OSvozApiException catch (error) {
+      await _update(
+        heard: rawCommand,
+        response: _friendlyApiError(error),
+        intent: "operator_status_failed",
+        action: error.code ?? "operator_status_failed",
+        security: "Blocked",
+        operatorStatus: "No pude revisar el operador",
+      );
+    }
   }
 
   Future<void> _stopSpeaking(String rawCommand) async {
@@ -269,7 +445,7 @@ class LabVoiceController extends ChangeNotifier {
                 "esencial:\n\n$previousResponse"
           : "Summarize this response in at most two sentences, preserving only "
                 "the essential information:\n\n$previousResponse";
-      final result = await LabVoiceApi.chat(
+      final result = await OSvozApi.chat(
         instruction,
         language: LanguageManager.effectiveLanguage,
       );
@@ -280,7 +456,7 @@ class LabVoiceController extends ChangeNotifier {
         action: "Previous response summarized.",
         security: "Secure",
       );
-    } on LabVoiceApiException catch (error) {
+    } on OSvozApiException catch (error) {
       await _update(
         heard: rawCommand,
         response: error.message,
@@ -295,25 +471,29 @@ class LabVoiceController extends ChangeNotifier {
     await _update(
       heard: rawCommand,
       response: LanguageManager.text(
-        "Estoy inspeccionando el proyecto activo.",
-        "Inspecting the active project.",
+        "Estoy revisando el proyecto activo.",
+        "Checking the active project.",
       ),
       intent: "inspect_project",
-      action: "Reading project metadata and Git status.",
+      action: "Reading project metadata.",
       security: "Read only",
     );
     try {
       final result = await ActionExecutor.inspectProject();
       final project = result["project"] as Map<String, dynamic>?;
       final technologies = (project?["technologies"] as List?) ?? [];
+      final explanation = result["explanation"] as Map<String, dynamic>?;
       await _update(
         heard: rawCommand,
         response: LanguageManager.text(
-          "Inspección completada. Encontré ${project?["file_count"] ?? 0} archivos y las tecnologías ${technologies.join(", ")}.",
+          "Proyecto activo: ${project?["name"] ?? "ian_labvoice"}. "
+          "Archivos visibles: ${project?["file_count"] ?? 0}. "
+          "Tecnologías: ${technologies.isEmpty ? "pendiente" : technologies.join(", ")}. "
+          "Siguiente paso sugerido: ${explanation?["next_action"] ?? "probar comandos básicos"}.",
           result["message"] ?? "Project inspection completed.",
         ),
         intent: "inspect_project",
-        action: "PROJECT_INSPECT completed.",
+        action: "PROJECT_INSPECT completed without diagnostics.",
         security: "Read only",
       );
     } catch (error) {
@@ -329,25 +509,109 @@ class LabVoiceController extends ChangeNotifier {
     }
   }
 
-  Future<void> _runDiagnostics(String rawCommand) async {
-    final progress = _beginProgress(rawCommand, const [
-      "Sigo ejecutando las pruebas. Te aviso apenas tenga el resultado.",
-      "El diagnóstico continúa; estoy revisando cada comprobación sin interrumpir el proceso.",
-      "Todavía estoy trabajando. No necesitas repetir el comando.",
-    ]);
+  Future<void> _listProjectFiles(String rawCommand) async {
     await _update(
       heard: rawCommand,
-      response: LanguageManager.text(
-        "Estoy ejecutando el análisis y las pruebas del proyecto.",
-        "Running project analysis and tests.",
-      ),
-      intent: "run_diagnostics",
-      action: "Executing approved diagnostic tools.",
-      security: "Controlled execution",
+      response: "Estoy listando archivos seguros del proyecto.",
+      intent: "list_files",
+      action: "Reading project file index through File Access Layer.",
+      security: "Read only",
     );
     try {
-      final result = await ActionExecutor.runDiagnostics();
-      _finishProgress(progress);
+      final result = await OSvozApi.listProjectFiles(limit: 18);
+      final directories = (result["directories"] as List?) ?? [];
+      final files = (result["files"] as List?) ?? [];
+      final directoryText = directories.take(5).join(", ");
+      final fileText = files
+          .take(8)
+          .map(
+            (file) => file is Map ? file["path"].toString() : file.toString(),
+          )
+          .join(", ");
+      final parts = [
+        if (directoryText.isNotEmpty) "Carpetas: $directoryText.",
+        if (fileText.isNotEmpty) "Archivos: $fileText.",
+      ];
+      await _update(
+        heard: rawCommand,
+        response: parts.isEmpty
+            ? "No encontré archivos visibles en el proyecto."
+            : parts.join(" "),
+        intent: "list_files",
+        action: "Listed read-only project files.",
+        security: result["permission"]?.toString() ?? "Read only",
+      );
+    } on OSvozApiException catch (error) {
+      await _update(
+        heard: rawCommand,
+        response: error.message,
+        intent: "list_files_failed",
+        action: error.code ?? "file_list_failed",
+        security: "Blocked",
+      );
+    }
+  }
+
+  Future<void> _readProjectFile(String rawCommand) async {
+    final path = IntentEngine.extractProjectFilePath(rawCommand);
+    if (path == null) {
+      await _update(
+        heard: rawCommand,
+        response: "Dime qué archivo quieres leer, por ejemplo: lee README.",
+        intent: "read_project_file",
+        action: "Missing project-relative file path.",
+        security: "Read only",
+      );
+      return;
+    }
+    await _update(
+      heard: rawCommand,
+      response: "Estoy leyendo $path en modo seguro.",
+      intent: "read_project_file",
+      action: "Reading project file through File Access Layer.",
+      security: "Read only",
+    );
+    try {
+      final result = await OSvozApi.readProjectFile(path);
+      final content = result["content"]?.toString() ?? "";
+      final preview = _compactFilePreview(content);
+      await _update(
+        heard: rawCommand,
+        response: "Leí ${result["path"]}. Resumen rápido: $preview",
+        intent: "read_project_file",
+        action: "Read safe project text file.",
+        security: result["permission"]?.toString() ?? "Read only",
+      );
+    } on OSvozApiException catch (error) {
+      await _update(
+        heard: rawCommand,
+        response: error.message,
+        intent: "read_project_file_failed",
+        action: error.code ?? "file_read_failed",
+        security: "Blocked",
+      );
+    }
+  }
+
+  String _compactFilePreview(String content) {
+    final cleaned = content
+        .split(RegExp(r'\r?\n'))
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .take(6)
+        .join(" ");
+    if (cleaned.length <= 420) return cleaned;
+    return "${cleaned.substring(0, 420)}...";
+  }
+
+  Future<void> _runDiagnostics(String rawCommand) async {
+    try {
+      final result = await _executeActionWithVisibleSecurity(
+        actionName: "RUN_DIAGNOSTICS",
+        rawCommand: rawCommand,
+        intent: "run_diagnostics",
+        execute: ActionExecutor.runDiagnostics,
+      );
       final summary = result["summary"] as Map<String, dynamic>?;
       final failed = summary?["failed"] ?? 0;
       await _update(
@@ -363,7 +627,6 @@ class LabVoiceController extends ChangeNotifier {
         security: "Controlled execution",
       );
     } catch (error) {
-      _finishProgress(progress);
       await _failure(
         rawCommand,
         LanguageManager.text(
@@ -402,13 +665,697 @@ class LabVoiceController extends ChangeNotifier {
     }
   }
 
+  Future<void> _openBrowser(String rawCommand) async {
+    await _openBrowserUrl(
+      rawCommand,
+      "https://www.google.com",
+      LanguageManager.text("Abrí el navegador.", "I opened the browser."),
+    );
+  }
+
+  Future<void> _openYouTubeMusic(String rawCommand) async {
+    final query = IntentEngine.extractYouTubeQuery(rawCommand);
+    final wantsSummary = IntentEngine.requestsProjectContinuation(rawCommand);
+    await _update(
+      heard: rawCommand,
+      response: LanguageManager.text(
+        "Abriendo YouTube e intentando reproducir $query.",
+        "Opening YouTube and trying to play $query.",
+      ),
+      intent: "youtube_music",
+      action: "Opening YouTube playback attempt.",
+      security: "Routine browser action",
+    );
+    try {
+      final result = await OSvozApi.playYouTube(query);
+      final playAttempted = result["play_attempted"] == true;
+      String response = playAttempted
+          ? LanguageManager.text(
+              "Abrí YouTube e intenté reproducir el primer resultado de $query.",
+              "I opened YouTube and tried to play the first result for $query.",
+            )
+          : LanguageManager.text(
+              "Abrí YouTube con la búsqueda de $query. El navegador no permitió reproducción automática todavía.",
+              "I opened YouTube search for $query. The browser did not allow autoplay yet.",
+            );
+      if (wantsSummary) {
+        response = "$response ${await _localProjectSummary()}";
+      }
+      await _update(
+        heard: rawCommand,
+        response: response,
+        intent: "youtube_music",
+        action: result["message"]?.toString() ?? "YouTube playback requested.",
+        security: "Routine browser action",
+      );
+    } on OSvozApiException catch (error) {
+      await _update(
+        heard: rawCommand,
+        response: _friendlyApiError(error),
+        intent: "youtube_music_failed",
+        action: error.code ?? "youtube_music_failed",
+        security: "Blocked",
+      );
+    }
+  }
+
+  Future<void> _runOrchestratedPlan(
+    String rawCommand,
+    OSvozIntentPlan plan,
+  ) async {
+    final hasMedia = plan.tasks.any(
+      (task) => task.type == OSvozTaskType.playMedia,
+    );
+    if (hasMedia) {
+      final mediaTask = plan.tasks.firstWhere(
+        (task) => task.type == OSvozTaskType.playMedia,
+      );
+      final query = mediaTask.parameters["query"] ?? "la música";
+      await _speakResponse(
+        LanguageManager.text(
+          "Listo, pongo $query. Dejo los detalles en pantalla.",
+          "Done, playing $query. I will leave the details on screen.",
+        ),
+      );
+    }
+
+    _showStatus(
+      heard: rawCommand,
+      response: LanguageManager.text(
+        "Entendido. Estoy ejecutando ${plan.tasks.length} tareas.",
+        "Understood. I am running ${plan.tasks.length} tasks.",
+      ),
+      intent: plan.intent,
+      action: plan.toJson().toString(),
+      security: "Routine orchestrated action",
+    );
+
+    final parallelTasks = plan.tasks
+        .where((task) => task.canRunInParallel)
+        .toList(growable: false);
+    final sequentialTasks = plan.tasks
+        .where((task) => !task.canRunInParallel)
+        .toList(growable: false);
+    final results = <_OrchestratedTaskResult>[];
+    final executionStopwatch = Stopwatch()..start();
+
+    if (parallelTasks.isNotEmpty) {
+      _showStatus(
+        heard: rawCommand,
+        response: LanguageManager.text(
+          "Voy con ${parallelTasks.length} tarea${parallelTasks.length == 1 ? "" : "s"} rápida${parallelTasks.length == 1 ? "" : "s"}.",
+          "Running ${parallelTasks.length} quick task${parallelTasks.length == 1 ? "" : "s"}.",
+        ),
+        intent: "compound_task_progress",
+        action: parallelTasks.map(_taskProgressLabel).join(", "),
+        security: "Routine orchestrated action",
+      );
+      results.addAll(
+        await Future.wait(
+          parallelTasks.map((task) => _runOrchestratedTask(task)),
+        ),
+      );
+    }
+    for (var index = 0; index < sequentialTasks.length; index++) {
+      final task = sequentialTasks[index];
+      _showStatus(
+        heard: rawCommand,
+        response: LanguageManager.text(
+          "Paso ${index + 1} de ${sequentialTasks.length}: ${_taskProgressLabel(task)}.",
+          "Step ${index + 1} of ${sequentialTasks.length}: ${_taskProgressLabel(task)}.",
+        ),
+        intent: "compound_task_progress",
+        action: task.toJson().toString(),
+        security: "Routine orchestrated action",
+      );
+      results.add(await _runOrchestratedTask(task));
+    }
+    executionStopwatch.stop();
+    VoiceLatencyMetrics.record("execution_ms", executionStopwatch.elapsed);
+
+    final response = plan.executiveSummary
+        ? _executiveOrchestratedResponse(results)
+        : _orchestratedResponse(results);
+    await _update(
+      heard: rawCommand,
+      response: response,
+      intent: plan.intent,
+      action: results
+          .map((result) => "${result.label}: ${result.message}")
+          .join(" | "),
+      security: results.any((result) => !result.success)
+          ? "Partial completion"
+          : "Routine orchestrated action",
+      speak: !hasMedia,
+    );
+  }
+
+  Future<_OrchestratedTaskResult> _runOrchestratedTask(OSvozTask task) async {
+    switch (task.type) {
+      case OSvozTaskType.openApp:
+        final action = task.target == "terminal"
+            ? "OPEN_TERMINAL"
+            : "OPEN_VSCODE";
+        final result = await _safeAction(action);
+        return _OrchestratedTaskResult(
+          label: task.target == "terminal" ? "Terminal" : "VS Code",
+          success: result["success"] == true,
+          message: result["message"]?.toString() ?? action,
+        );
+      case OSvozTaskType.openBrowser:
+        try {
+          final result = await OSvozApi.openBrowserUrl(
+            "https://www.google.com",
+          );
+          return _OrchestratedTaskResult(
+            label: "Navegador",
+            success: result["success"] == true,
+            message: result["message"]?.toString() ?? "Browser opened.",
+          );
+        } catch (error) {
+          return _OrchestratedTaskResult(
+            label: "Navegador",
+            success: false,
+            message: error.toString(),
+          );
+        }
+      case OSvozTaskType.playMedia:
+        final query = task.parameters["query"] ?? "music";
+        final platform = task.parameters["platform"] ?? task.target;
+        final autoSkipAds = task.parameters["auto_skip_ads"] == "true";
+        final result = await _safePlayMusic(
+          query,
+          platform,
+          autoSkipAds: autoSkipAds,
+        );
+        final playAttempted = result["play_attempted"] == true;
+        return _OrchestratedTaskResult(
+          label: _musicPlatformLabel(platform),
+          success: result["success"] == true,
+          message: platform == "youtube"
+              ? (playAttempted
+                    ? "intenté reproducir $query${autoSkipAds ? " y activar omisión automática de anuncios" : ""}"
+                    : "abrí la búsqueda de $query")
+              : "abrí $platform con $query",
+        );
+      case OSvozTaskType.operatorStatus:
+        try {
+          final status = await OperatorStatusService.fetch(
+            summaryMode: task.parameters["summary_mode"] ?? "quick",
+          );
+          return _OrchestratedTaskResult(
+            label: "Estado",
+            success: true,
+            message: status.spokenSummary,
+          );
+        } catch (error) {
+          return _OrchestratedTaskResult(
+            label: "Estado",
+            success: false,
+            message: error.toString(),
+          );
+        }
+      case OSvozTaskType.summarizeProject:
+        return _OrchestratedTaskResult(
+          label: "Resumen",
+          success: true,
+          message: await _localProjectSummary(),
+        );
+      case OSvozTaskType.listFiles:
+        try {
+          final result = await OSvozApi.listProjectFiles(limit: 12);
+          final files = ((result["files"] as List?) ?? [])
+              .take(6)
+              .map(
+                (file) =>
+                    file is Map ? file["path"].toString() : file.toString(),
+              )
+              .join(", ");
+          return _OrchestratedTaskResult(
+            label: "Archivos",
+            success: true,
+            message: files.isEmpty ? "no encontré archivos visibles" : files,
+          );
+        } catch (error) {
+          return _OrchestratedTaskResult(
+            label: "Archivos",
+            success: false,
+            message: error.toString(),
+          );
+        }
+      case OSvozTaskType.readFile:
+        final path = task.parameters["path"];
+        if (path == null) {
+          return const _OrchestratedTaskResult(
+            label: "Archivo",
+            success: false,
+            message: "falta la ruta del archivo",
+          );
+        }
+        try {
+          final result = await OSvozApi.readProjectFile(path);
+          return _OrchestratedTaskResult(
+            label: "Archivo",
+            success: true,
+            message:
+                "leí ${result["path"]}: ${_compactFilePreview(result["content"]?.toString() ?? "")}",
+          );
+        } catch (error) {
+          return _OrchestratedTaskResult(
+            label: "Archivo",
+            success: false,
+            message: error.toString(),
+          );
+        }
+      case OSvozTaskType.runDiagnostics:
+        try {
+          final result = await _executeActionWithVisibleSecurity(
+            actionName: "RUN_DIAGNOSTICS",
+            rawCommand: "run diagnostics",
+            intent: "run_diagnostics",
+            execute: ActionExecutor.runDiagnostics,
+          );
+          final summary = result["summary"] as Map<String, dynamic>?;
+          final passed = summary?["passed"] ?? 0;
+          final failed = summary?["failed"] ?? 0;
+          return _OrchestratedTaskResult(
+            label: "Pruebas",
+            success: failed == 0,
+            message: failed == 0
+                ? "pasaron $passed comprobaciones"
+                : "pasaron $passed comprobaciones y fallaron $failed",
+          );
+        } catch (error) {
+          return _OrchestratedTaskResult(
+            label: "Pruebas",
+            success: false,
+            message: error.toString(),
+          );
+        }
+    }
+  }
+
+  String _taskProgressLabel(OSvozTask task) {
+    return switch (task.type) {
+      OSvozTaskType.openApp =>
+        task.target == "terminal" ? "abriendo Terminal" : "abriendo VS Code",
+      OSvozTaskType.openBrowser => "abriendo navegador",
+      OSvozTaskType.playMedia => "preparando música",
+      OSvozTaskType.operatorStatus => "revisando estado",
+      OSvozTaskType.summarizeProject => "preparando resumen",
+      OSvozTaskType.listFiles => "listando archivos",
+      OSvozTaskType.readFile => "leyendo archivo",
+      OSvozTaskType.runDiagnostics => "ejecutando diagnóstico",
+    };
+  }
+
+  Future<Map<String, dynamic>> _safeAction(String actionName) async {
+    try {
+      return await _executeActionWithVisibleSecurity(
+        actionName: actionName,
+        rawCommand: actionName,
+        intent: "orchestrated_action",
+      );
+    } catch (error) {
+      return {"success": false, "message": error.toString()};
+    }
+  }
+
+  Future<Map<String, dynamic>> _executeActionWithVisibleSecurity({
+    required String actionName,
+    required String rawCommand,
+    required String intent,
+    Future<Map<String, dynamic>> Function()? execute,
+    bool announceRoutine = false,
+  }) async {
+    final receivedCue = ConversationalPresence.cue(
+      stage: ConversationalPresenceStage.received,
+      actionName: actionName,
+      language: LanguageManager.effectiveLanguage,
+      turn: _presenceTurn++,
+    );
+    _showStatus(
+      heard: rawCommand,
+      response: receivedCue,
+      intent: "${intent}_received",
+      action: "$actionName received.",
+      security: "Preparing",
+      operatorStatus: "Preparando acción",
+    );
+    unawaited(_speakResponse(receivedCue));
+
+    final preflight = await ActionExecutor.preflight(actionName);
+    _auditOperatorEvent(
+      "operator.preflight",
+      preflight.approved ? "approved" : "blocked",
+      actionName: actionName,
+      intent: intent,
+      preflight: preflight,
+    );
+    if (!preflight.approved) {
+      final pendingMessage = ConversationalPresence.cue(
+        stage: ConversationalPresenceStage.securityCheck,
+        actionName: actionName,
+        language: LanguageManager.effectiveLanguage,
+        turn: _presenceTurn++,
+      );
+      _showStatus(
+        heard: rawCommand,
+        response: pendingMessage,
+        intent: "security_challenge_pending",
+        action: "$actionName waiting for local authentication.",
+        security: _securityChallengeLabel(preflight),
+        operatorStatus: "Confirmando presencia antes de ejecutar",
+      );
+      await _speakResponse(pendingMessage);
+
+      final challenge = await ActionExecutor.challengeBlockedPreflight(
+        preflight,
+      );
+      _auditOperatorEvent(
+        "operator.challenge",
+        challenge.approved ? "approved" : "blocked",
+        actionName: actionName,
+        intent: intent,
+        preflight: preflight,
+        extra: {"challenge_security": challenge.security},
+      );
+      if (!challenge.approved) {
+        final blockedIntent =
+            challenge.security == "Critical action still blocked"
+            ? "critical_action_blocked"
+            : "security_challenge_failed";
+        await _update(
+          heard: rawCommand,
+          response: challenge.message,
+          intent: blockedIntent,
+          action: "$actionName blocked by security challenge.",
+          security: challenge.security,
+          operatorStatus: blockedIntent == "critical_action_blocked"
+              ? "Acción crítica bloqueada"
+              : "No se confirmó presencia",
+        );
+        throw OSvozApiException(challenge.message, code: blockedIntent);
+      }
+
+      _showStatus(
+        heard: rawCommand,
+        response: challenge.message,
+        intent: "security_challenge_approved",
+        action: "$actionName approved by local authentication.",
+        security: challenge.security,
+        operatorStatus: "Presencia confirmada",
+      );
+      await _speakResponse(challenge.message);
+    } else if (announceRoutine) {
+      await _update(
+        heard: rawCommand,
+        response: "Ejecutando ${_actionLabel(actionName)}.",
+        intent: intent,
+        action: "$actionName requested.",
+        security: "Routine action",
+        operatorStatus: "Ejecutando acción rutinaria",
+      );
+    }
+
+    _auditOperatorEvent(
+      "operator.execution",
+      "requested",
+      actionName: actionName,
+      intent: intent,
+      preflight: preflight,
+    );
+    final run = execute ?? () => ActionExecutor.executeApproved(actionName);
+    final progress = _beginProgress(
+      rawCommand,
+      ConversationalPresence.progressMessages(
+        actionName: actionName,
+        language: LanguageManager.effectiveLanguage,
+      ),
+    );
+    late final Map<String, dynamic> result;
+    try {
+      final executionStopwatch = Stopwatch()..start();
+      result = await run();
+      executionStopwatch.stop();
+      VoiceLatencyMetrics.record("execution_ms", executionStopwatch.elapsed);
+    } finally {
+      _finishProgress(progress);
+    }
+    _auditOperatorEvent(
+      "operator.execution",
+      result["success"] == true ? "success" : "failed",
+      actionName: actionName,
+      intent: intent,
+      preflight: preflight,
+      extra: {"requires_confirmation": result["requires_confirmation"] == true},
+    );
+    return result;
+  }
+
+  void _auditOperatorEvent(
+    String eventType,
+    String outcome, {
+    required String actionName,
+    required String intent,
+    required OperatorPreflightResult preflight,
+    Map<String, dynamic> extra = const {},
+  }) {
+    AuditLogService.recordLater(
+      eventType,
+      outcome,
+      metadata: {
+        "action": actionName,
+        "intent": intent,
+        "capability_id": preflight.capability?.id,
+        "security_tier": preflight.tier.name,
+        "security_level": preflight.capability?.securityLevel,
+        "risk": preflight.capability?.risk,
+        "missing_factors": preflight.missingFactors,
+        ...extra,
+      },
+    );
+  }
+
+  String _securityChallengeLabel(OperatorPreflightResult preflight) {
+    return switch (preflight.tier) {
+      IovSecurityTier.routine => "security_challenge_pending",
+      IovSecurityTier.personalWork => "security_challenge_pending_personal",
+      IovSecurityTier.criticalAction => "security_challenge_pending_critical",
+    };
+  }
+
+  String _orchestratedResponse(List<_OrchestratedTaskResult> results) {
+    final successes = results.where((result) => result.success).toList();
+    final failures = results.where((result) => !result.success).toList();
+    final opened = successes
+        .where((result) => result.label != "Resumen")
+        .map((result) => "${result.label}: ${result.message}")
+        .join(". ");
+    final summary = successes
+        .where((result) => result.label == "Resumen")
+        .map((result) => result.message)
+        .join(" ");
+    final failureText = failures.isEmpty
+        ? ""
+        : " Pendiente: ${failures.map((result) => "${result.label}: ${result.message}").join(". ")}";
+    final parts = [
+      if (opened.isNotEmpty) opened,
+      if (summary.isNotEmpty) summary,
+    ];
+    final body = parts.isEmpty
+        ? "No pude completar las tareas."
+        : parts.join(". ");
+    return "$body$failureText";
+  }
+
+  String _executiveOrchestratedResponse(List<_OrchestratedTaskResult> results) {
+    final successes = results.where((result) => result.success).toList();
+    final failures = results.where((result) => !result.success).toList();
+    final status = failures.isEmpty
+        ? "Listo: completé la misión."
+        : successes.isEmpty
+        ? "No pude completar la misión."
+        : "Completé parte de la misión.";
+    final resultText = results
+        .take(4)
+        .map((result) => "${result.label}: ${result.message}")
+        .join(". ");
+    final nextStep = failures.isEmpty
+        ? "Siguiente paso: podemos seguir con una edición o una prueba más específica."
+        : "Siguiente paso: revisamos primero ${failures.first.label.toLowerCase()} y lo corregimos.";
+    return "$status Resultado: $resultText. $nextStep";
+  }
+
+  Future<Map<String, dynamic>> _safePlayMusic(
+    String query,
+    String platform, {
+    bool autoSkipAds = false,
+  }) async {
+    try {
+      return await OSvozApi.playMusic(
+        query,
+        platform: platform,
+        autoSkipAds: autoSkipAds,
+      );
+    } catch (error) {
+      return {
+        "success": false,
+        "play_attempted": false,
+        "message": error.toString(),
+      };
+    }
+  }
+
+  String _musicPlatformLabel(String platform) {
+    switch (platform) {
+      case "spotify":
+        return "Spotify";
+      case "apple_music":
+        return "Apple Music";
+      default:
+        return "YouTube";
+    }
+  }
+
+  Future<void> _openBrowserUrl(
+    String rawCommand,
+    String url,
+    String successResponse,
+  ) async {
+    await _update(
+      heard: rawCommand,
+      response: LanguageManager.text("Abriendo navegador.", "Opening browser."),
+      intent: "browser_open",
+      action: "Opening validated browser URL.",
+      security: "Routine browser action",
+    );
+    try {
+      await OSvozApi.openBrowserUrl(url);
+      await _update(
+        heard: rawCommand,
+        response: successResponse,
+        intent: "browser_open",
+        action: "Opened $url",
+        security: "Routine browser action",
+      );
+    } on OSvozApiException catch (error) {
+      await _update(
+        heard: rawCommand,
+        response: _friendlyApiError(error),
+        intent: "browser_open_failed",
+        action: error.code ?? "browser_open_failed",
+        security: "Blocked",
+      );
+    }
+  }
+
+  Future<String> _localProjectSummary() async {
+    try {
+      final session = await SessionMemory.loadSessionState();
+      return LanguageManager.text(
+        "Resumen rápido: proyecto activo ${session.activeProject}. "
+            "Tarea actual: ${session.currentTask}. "
+            "Último avance: ${session.lastAction}. "
+            "Siguiente paso: ${session.nextAction}.",
+        "Quick summary: active project ${session.activeProject}. "
+            "Current task: ${session.currentTask}. "
+            "Last progress: ${session.lastAction}. "
+            "Next step: ${session.nextAction}.",
+      );
+    } catch (_) {
+      return LanguageManager.text(
+        "No pude cargar la memoria local del proyecto.",
+        "I could not load the local project memory.",
+      );
+    }
+  }
+
+  Future<void> _skipAdGuidance(String rawCommand) async {
+    await _update(
+      heard: rawCommand,
+      response: LanguageManager.text("Revisando YouTube.", "Checking YouTube."),
+      intent: "skip_ad",
+      action: "Looking for the official YouTube skip ad button.",
+      security: "Platform rules respected",
+    );
+    try {
+      final result = await OSvozApi.skipYouTubeAd();
+      final skipped = result["skipped"] == true;
+      final state = result["state"]?.toString();
+      await _update(
+        heard: rawCommand,
+        response: skipped
+            ? LanguageManager.text("Anuncio omitido.", "Ad skipped.")
+            : _skipAdStatusMessage(state),
+        intent: "skip_ad",
+        action: result["message"]?.toString() ?? "YouTube ad skip checked.",
+        security: "Platform rules respected",
+      );
+    } on OSvozApiException catch (error) {
+      await _update(
+        heard: rawCommand,
+        response: _friendlyApiError(error),
+        intent: "skip_ad_failed",
+        action: error.code ?? "youtube_ad_skip_failed",
+        security: "Blocked",
+      );
+    }
+  }
+
+  String _skipAdStatusMessage(String? state) {
+    if (state == "chrome_javascript_events_disabled") {
+      return LanguageManager.text(
+        "Chrome bloquea el control. Activa View, Developer, Allow JavaScript from Apple Events.",
+        "Chrome is blocking control. Enable View, Developer, Allow JavaScript from Apple Events.",
+      );
+    }
+    if (state == "accessibility_unavailable") {
+      return LanguageManager.text(
+        "Falta permiso de Accesibilidad para controlar Chrome.",
+        "Accessibility permission is required to control Chrome.",
+      );
+    }
+    if (state == "control_unavailable") {
+      return LanguageManager.text(
+        "No pude controlar la pestaña actual de Chrome todavía.",
+        "I could not control the current Chrome tab yet.",
+      );
+    }
+    return LanguageManager.text(
+      "Todavía no aparece el botón oficial de omitir.",
+      "The official skip button is not visible yet.",
+    );
+  }
+
+  Future<void> _musicNeedsClarification(String rawCommand) async {
+    await _update(
+      heard: rawCommand,
+      response: LanguageManager.text(
+        "Escuché una petición de música, pero no pude separar bien el artista o la plataforma. Dime: reproduce seguido del artista y luego la plataforma.",
+        "I heard a music request, but I could not separate the artist or platform clearly. Say: play, then the artist, then the platform.",
+      ),
+      intent: "music_clarification_needed",
+      action:
+          "Music-like command did not produce a safe structured media task.",
+      security: "No external action executed",
+    );
+  }
+
   Future<void> _runChat(String rawCommand, String message) async {
     final progress = _beginProgress(rawCommand, const [
       "Sigo revisando el contexto. Ya casi tengo una respuesta útil.",
       "Continúo analizando; no necesitas repetir la pregunta.",
     ]);
+    _showStatus(
+      heard: rawCommand,
+      response: LanguageManager.text("Estoy pensando...", "Thinking..."),
+      intent: "chat_pending",
+      action: "Waiting for OSvoz response.",
+      security: "Secure",
+    );
     try {
-      final result = await LabVoiceApi.chat(
+      final result = await OSvozApi.chat(
         message,
         language: LanguageManager.effectiveLanguage,
       );
@@ -427,16 +1374,29 @@ class LabVoiceController extends ChangeNotifier {
         action: action,
         security: "Secure",
       );
-    } on LabVoiceApiException catch (error) {
+    } on OSvozApiException catch (error) {
       _finishProgress(progress);
       await _update(
         heard: rawCommand,
-        response: error.message,
+        response: _friendlyApiError(error),
         intent: "backend_error",
         action: error.code ?? "chat_failed",
         security: "Blocked",
       );
     }
+  }
+
+  String _friendlyApiError(OSvozApiException error) {
+    final message = error.message.trim();
+    final lower = message.toLowerCase();
+    if (lower.contains("ai service") ||
+        lower.contains("temporarily unavailable")) {
+      return LanguageManager.text(
+        "La IA conversacional no está disponible ahora. Los comandos locales como abrir Terminal, VS Code y leer archivos deben seguir funcionando.",
+        "The conversational AI is unavailable right now. Local commands like opening Terminal, VS Code and reading files should still work.",
+      );
+    }
+    return message.isEmpty ? LanguageManager.backendError() : message;
   }
 
   Future<void> _prepareEdit(String rawCommand) async {
@@ -452,7 +1412,7 @@ class LabVoiceController extends ChangeNotifier {
       security: "Preview only",
     );
     try {
-      final result = await LabVoiceApi.prepareEdit(
+      final result = await OSvozApi.prepareEdit(
         rawCommand,
         language: LanguageManager.effectiveLanguage,
       );
@@ -468,7 +1428,7 @@ class LabVoiceController extends ChangeNotifier {
         action: "Exact diff sent to VS Code for review.",
         security: "Awaiting explicit confirmation",
       );
-    } on LabVoiceApiException catch (error) {
+    } on OSvozApiException catch (error) {
       _finishProgress(progress);
       await _update(
         heard: rawCommand,
@@ -484,7 +1444,7 @@ class LabVoiceController extends ChangeNotifier {
     final operationId = _pendingEditOperationId;
     if (operationId == null) return;
     try {
-      final result = await LabVoiceApi.confirmEdit(operationId);
+      final result = await OSvozApi.confirmEdit(operationId);
       _pendingEditOperationId = null;
       await _update(
         heard: rawCommand,
@@ -497,7 +1457,7 @@ class LabVoiceController extends ChangeNotifier {
         security: "Confirmed",
       );
       unawaited(_monitorEdit(operationId));
-    } on LabVoiceApiException catch (error) {
+    } on OSvozApiException catch (error) {
       await _update(
         heard: rawCommand,
         response: error.message,
@@ -513,7 +1473,7 @@ class LabVoiceController extends ChangeNotifier {
     for (var attempt = 0; attempt < 300; attempt++) {
       await Future<void>.delayed(const Duration(seconds: 1));
       try {
-        final result = await LabVoiceApi.getEdit(operationId);
+        final result = await OSvozApi.getEdit(operationId);
         final operation = result["operation"] as Map<String, dynamic>?;
         final status = operation?["status"]?.toString();
         if (status == null || !terminalStates.contains(status)) continue;
@@ -552,7 +1512,7 @@ class LabVoiceController extends ChangeNotifier {
           );
         }
         return;
-      } on LabVoiceApiException {
+      } on OSvozApiException {
         return;
       }
     }
@@ -562,8 +1522,9 @@ class LabVoiceController extends ChangeNotifier {
     final generation = ++_progressGeneration;
     var index = 0;
     _progressTimer?.cancel();
-    _progressTimer = Timer.periodic(const Duration(seconds: 45), (_) {
+    _progressTimer = Timer.periodic(const Duration(seconds: 8), (_) {
       if (generation != _progressGeneration || messages.isEmpty) return;
+      if (VoiceEngine.speaking.value) return;
       final message = messages[index % messages.length];
       index++;
       heardCommand = heard;
@@ -588,7 +1549,7 @@ class LabVoiceController extends ChangeNotifier {
     final operationId = _pendingEditOperationId;
     if (operationId == null) return;
     try {
-      final result = await LabVoiceApi.cancelEdit(operationId);
+      final result = await OSvozApi.cancelEdit(operationId);
       _pendingEditOperationId = null;
       await _update(
         heard: rawCommand,
@@ -597,7 +1558,7 @@ class LabVoiceController extends ChangeNotifier {
         action: "Proposed editor operation canceled.",
         security: "Secure",
       );
-    } on LabVoiceApiException catch (error) {
+    } on OSvozApiException catch (error) {
       await _update(
         heard: rawCommand,
         response: error.message,
@@ -610,7 +1571,7 @@ class LabVoiceController extends ChangeNotifier {
 
   Future<void> _undoLastEdit(String rawCommand) async {
     try {
-      final result = await LabVoiceApi.undoLastEdit();
+      final result = await OSvozApi.undoLastEdit();
       await _update(
         heard: rawCommand,
         response:
@@ -624,7 +1585,7 @@ class LabVoiceController extends ChangeNotifier {
       if (operationId != null) {
         unawaited(_monitorEdit(operationId));
       }
-    } on LabVoiceApiException catch (error) {
+    } on OSvozApiException catch (error) {
       await _update(
         heard: rawCommand,
         response: error.message,
@@ -641,7 +1602,12 @@ class LabVoiceController extends ChangeNotifier {
     String actionName,
   ) async {
     try {
-      final result = await ActionExecutor.request(actionName);
+      final result = await _executeActionWithVisibleSecurity(
+        actionName: actionName,
+        rawCommand: rawCommand,
+        intent: intent,
+        announceRoutine: _routineAction(actionName),
+      );
       if (result["requires_confirmation"] == true) {
         _pendingConfirmationToken = result["confirmation_token"];
         _pendingActionName = actionName;
@@ -656,10 +1622,7 @@ class LabVoiceController extends ChangeNotifier {
       }
       await _update(
         heard: rawCommand,
-        response: LanguageManager.text(
-          LanguageManager.actionCompleted(actionName),
-          result["message"] ?? "$actionName completed.",
-        ),
+        response: _actionSuccessMessage(actionName, result),
         intent: intent,
         action: "$actionName executed.",
         security: result["policy"]?["risk"] ?? "Controlled",
@@ -672,6 +1635,54 @@ class LabVoiceController extends ChangeNotifier {
         "Blocked",
       );
     }
+  }
+
+  bool _routineAction(String action) =>
+      action == "OPEN_TERMINAL" ||
+      action == "OPEN_VSCODE" ||
+      action == "OPEN_PROJECT";
+
+  String _actionLabel(String action) {
+    switch (action) {
+      case "OPEN_TERMINAL":
+        return LanguageManager.text("Terminal", "Terminal");
+      case "OPEN_VSCODE":
+        return LanguageManager.text("Visual Studio Code", "Visual Studio Code");
+      case "OPEN_PROJECT":
+        return LanguageManager.text("el proyecto", "the project");
+      case "RUN_DIAGNOSTICS":
+        return LanguageManager.text(
+          "las pruebas del proyecto",
+          "the project tests",
+        );
+      default:
+        return action;
+    }
+  }
+
+  String _actionSuccessMessage(String action, Map<String, dynamic> result) {
+    if (action == "OPEN_TERMINAL") {
+      return LanguageManager.text(
+        "Terminal abierta en el proyecto OSvoz.",
+        result["message"]?.toString() ?? "Terminal opened.",
+      );
+    }
+    if (action == "OPEN_VSCODE") {
+      return LanguageManager.text(
+        "Visual Studio Code abierto con el proyecto OSvoz.",
+        result["message"]?.toString() ?? "Visual Studio Code opened.",
+      );
+    }
+    if (action == "OPEN_PROJECT") {
+      return LanguageManager.text(
+        "Proyecto OSvoz abierto.",
+        result["message"]?.toString() ?? "Project opened.",
+      );
+    }
+    return LanguageManager.text(
+      LanguageManager.actionCompleted(action),
+      result["message"]?.toString() ?? "$action completed.",
+    );
   }
 
   Future<void> _confirmPendingAction(String rawCommand) async {
@@ -703,7 +1714,7 @@ class LabVoiceController extends ChangeNotifier {
         action: "$actionName confirmed and executed.",
         security: "Confirmed",
       );
-    } on LabVoiceApiException catch (error) {
+    } on OSvozApiException catch (error) {
       _clearPendingAction();
       await _update(
         heard: rawCommand,
@@ -743,7 +1754,7 @@ class LabVoiceController extends ChangeNotifier {
         action: "Pending action canceled.",
         security: "Secure",
       );
-    } on LabVoiceApiException catch (error) {
+    } on OSvozApiException catch (error) {
       _clearPendingAction();
       await _update(
         heard: rawCommand,
@@ -760,6 +1771,20 @@ class LabVoiceController extends ChangeNotifier {
     _pendingActionName = null;
   }
 
+  Future<void> voiceEnrollmentResult({
+    required String heard,
+    required String response,
+    required String action,
+    String security = "Voice identity",
+  }) => _update(
+    heard: heard,
+    response: response,
+    intent: "speaker_enrollment",
+    action: action,
+    security: security,
+    operatorStatus: "Identidad de voz actualizada",
+  );
+
   Future<void> _failure(
     String heard,
     String message,
@@ -771,6 +1796,7 @@ class LabVoiceController extends ChangeNotifier {
     intent: "backend_error",
     action: error.toString(),
     security: security,
+    operatorStatus: "Operación bloqueada",
   );
 
   Future<void> _update({
@@ -779,21 +1805,56 @@ class LabVoiceController extends ChangeNotifier {
     required String intent,
     required String action,
     required String security,
+    String? operatorStatus,
+    bool speak = true,
   }) async {
     heardCommand = heard;
     this.response = response;
     detectedIntent = intent;
     technicalAction = action;
     securityLevel = security;
+    if (operatorStatus != null) this.operatorStatus = operatorStatus;
+    final startedAt = _commandStartedAt;
+    if (startedAt != null &&
+        !intent.endsWith("_pending") &&
+        intent != "task_progress") {
+      final totalElapsed = DateTime.now().difference(startedAt);
+      VoiceLatencyMetrics.record("command_response_ms", totalElapsed);
+      VoiceLatencyMetrics.record("total_ms", totalElapsed);
+    }
     notifyListeners();
-    unawaited(_speakResponse(response));
+    if (speak) {
+      unawaited(_speakResponse(response));
+    }
+  }
+
+  void _showStatus({
+    required String heard,
+    required String response,
+    required String intent,
+    required String action,
+    required String security,
+    String? operatorStatus,
+  }) {
+    heardCommand = heard;
+    this.response = response;
+    detectedIntent = intent;
+    technicalAction = action;
+    securityLevel = security;
+    if (operatorStatus != null) this.operatorStatus = operatorStatus;
+    notifyListeners();
   }
 
   Future<void> _speakResponse(String text) async {
-    final error = await VoiceEngine.speak(text);
-    if (error == null) return;
-    technicalAction = "Voice playback failed: $error";
-    notifyListeners();
+    try {
+      final error = await VoiceEngine.speak(text);
+      if (error == null) return;
+      technicalAction = "Voice playback failed: $error";
+      notifyListeners();
+    } catch (error) {
+      technicalAction = "Voice playback failed: $error";
+      notifyListeners();
+    }
   }
 
   @override

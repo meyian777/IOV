@@ -4,7 +4,7 @@ import sqlite3
 
 
 DEFAULT_SESSION = {
-    "current_goal": "Build LabVoice Developer OS",
+    "current_goal": "Build OSvoz Developer OS",
     "current_task": "Create persistent session memory",
     "last_action": "Project Inspector completed",
     "next_action": "Connect persistent memory to Flutter",

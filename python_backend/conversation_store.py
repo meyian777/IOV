@@ -23,7 +23,7 @@ class ConversationStore:
             lines = []
             for turn in self._turns:
                 lines.append(f"User: {turn['user']}")
-                lines.append(f"LabVoice: {turn['assistant']}")
+                lines.append(f"OSvoz: {turn['assistant']}")
             return "\n".join(lines)
 
     def clear(self) -> None:

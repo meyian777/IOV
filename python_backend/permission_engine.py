@@ -1,70 +1,103 @@
-from dataclasses import dataclass
 import secrets
 import time
 
-
-@dataclass(frozen=True)
-class ActionPolicy:
-    name: str
-    description: str
-    risk: str
-    requires_confirmation: bool
-
-
-ACTION_POLICIES = {
-    "LIST_FILES": ActionPolicy(
-        name="LIST_FILES",
-        description="Read the names of files in the active project.",
-        risk="read_only",
-        requires_confirmation=False,
-    ),
-    "OPEN_VSCODE": ActionPolicy(
-        name="OPEN_VSCODE",
-        description="Open Visual Studio Code on this computer.",
-        risk="system",
-        requires_confirmation=True,
-    ),
-    "OPEN_PROJECT": ActionPolicy(
-        name="OPEN_PROJECT",
-        description="Open the active project in Visual Studio Code.",
-        risk="system",
-        requires_confirmation=True,
-    ),
-    "OPEN_TERMINAL": ActionPolicy(
-        name="OPEN_TERMINAL",
-        description="Open the Terminal application.",
-        risk="system",
-        requires_confirmation=True,
-    ),
-    "RUN_FLUTTER": ActionPolicy(
-        name="RUN_FLUTTER",
-        description="Start the Flutter application in Chrome.",
-        risk="process_execution",
-        requires_confirmation=True,
-    ),
-}
+from native_policy_client import NativePolicyClient
 
 
 class PermissionEngine:
-    def __init__(self, confirmation_ttl_seconds: int = 60):
+    SECURITY_LEVELS = {
+        "read_only": {
+            "level": 1,
+            "name": "routine",
+            "required_factors": ["wake_word", "active_session"],
+        },
+        "routine_system": {
+            "level": 1,
+            "name": "routine",
+            "required_factors": ["wake_word", "active_session"],
+        },
+        "process_execution": {
+            "level": 2,
+            "name": "personal_work",
+            "required_factors": [
+                "trusted_device",
+                "voice_id",
+                "preview_confirmation",
+            ],
+        },
+        "personal_data": {
+            "level": 2,
+            "name": "personal_work",
+            "required_factors": [
+                "trusted_device",
+                "voice_id",
+                "preview_confirmation",
+            ],
+        },
+        "critical_financial": {
+            "level": 3,
+            "name": "dangerous",
+            "required_factors": [
+                "trusted_device",
+                "face_id_or_touch_id",
+                "apple_watch_presence",
+                "passkey",
+                "explicit_preview_confirmation",
+            ],
+        },
+        "credential_change": {
+            "level": 3,
+            "name": "dangerous",
+            "required_factors": [
+                "trusted_device",
+                "face_id_or_touch_id",
+                "apple_watch_presence",
+                "passkey",
+                "explicit_preview_confirmation",
+            ],
+        },
+    }
+
+    def __init__(
+        self,
+        confirmation_ttl_seconds: int = 60,
+        native_client=None,
+    ):
         self.confirmation_ttl_seconds = confirmation_ttl_seconds
         self._pending = {}
+        self.native_client = native_client or NativePolicyClient()
 
     def prepare(self, action: str) -> dict:
-        policy = ACTION_POLICIES.get(action)
-        if policy is None:
+        policy = self.native_client.policy(action)
+        if not policy.get("success"):
+            error = policy.get("error", "unknown_action")
             return {
                 "success": False,
-                "error": "unknown_action",
-                "message": f"Unknown action: {action}",
+                "error": error,
+                "message": (
+                    f"Unknown action: {action}"
+                    if error == "unknown_action"
+                    else "The native authorization core is unavailable."
+                ),
             }
 
-        if not policy.requires_confirmation:
+        security = self._security_for_risk(policy["risk"])
+        serialized_policy = {
+            "name": policy["name"],
+            "description": policy["description"],
+            "risk": policy["risk"],
+            "security_level": security["level"],
+            "security_name": security["name"],
+            "required_factors": security["required_factors"],
+            "requires_confirmation": policy["requires_confirmation"],
+            "authority": "rust_native_core",
+        }
+        if not policy["requires_confirmation"]:
             return {
                 "success": True,
                 "approved": True,
                 "requires_confirmation": False,
-                "policy": self._serialize(policy),
+                "policy": serialized_policy,
             }
 
         token = secrets.token_urlsafe(24)
@@ -79,10 +112,11 @@ class PermissionEngine:
             "confirmation_token": token,
             "expires_in_seconds": self.confirmation_ttl_seconds,
             "message": (
-                f"Confirmation required. {policy.description} "
-                "Say confirm or cancel."
+                f"{policy['description']} "
+                f"Security level {security['level']} requires "
+                f"{', '.join(security['required_factors'])}."
             ),
-            "policy": self._serialize(policy),
+            "policy": serialized_policy,
         }
 
     def confirm(self, token: str) -> dict:
@@ -118,11 +152,17 @@ class PermissionEngine:
             ),
         }
 
-    @staticmethod
-    def _serialize(policy: ActionPolicy) -> dict:
-        return {
-            "name": policy.name,
-            "description": policy.description,
-            "risk": policy.risk,
-            "requires_confirmation": policy.requires_confirmation,
-        }
+    def _security_for_risk(self, risk: str) -> dict:
+        return self.SECURITY_LEVELS.get(
+            risk,
+            {
+                "level": 3,
+                "name": "unknown_high_risk",
+                "required_factors": [
+                    "trusted_device",
+                    "face_id_or_touch_id",
+                    "passkey",
+                    "explicit_preview_confirmation",
+                ],
+            },
+        )

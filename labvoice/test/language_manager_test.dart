@@ -56,11 +56,46 @@ void main() {
     expect(LanguageManager.activeVoiceLocale, 'es-ES');
   });
 
+  test('spoken Spanish can override an English session profile', () {
+    LanguageManager.setLanguage('en_US');
+
+    expect(
+      LanguageManager.alignToText('Dame el estado del sistema en detalle'),
+      'es',
+    );
+    expect(LanguageManager.current.languageTag, 'es');
+    expect(LanguageManager.activeVoiceLocale, 'es-ES');
+  });
+
+  test('automatic mode keeps long YouTube Spanish commands in Spanish', () {
+    LanguageManager.setLanguage('auto');
+    expect(LanguageManager.alignToText('Show me the most important'), 'en');
+
+    expect(
+      LanguageManager.alignToText(
+        'abre el navegador y reproduce en YouTube una canción de Banda Solar y dame un resumen',
+      ),
+      'es',
+    );
+    expect(LanguageManager.activeVoiceLocale, 'es-ES');
+    expect(LanguageManager.activeSystemVoice, 'Reed (Spanish (Mexico))');
+  });
+
   test('automatic mode recognizes short English transition words', () {
     LanguageManager.setLanguage('auto');
 
     expect(LanguageManager.alignToText('While'), 'en');
     expect(LanguageManager.activeRecognitionLocale, 'en_US');
+  });
+
+  test('explicit spoken language requests win immediately', () {
+    LanguageManager.setLanguage('en_US');
+
+    expect(LanguageManager.alignToText('IOV háblame en español'), 'es');
+    expect(LanguageManager.activeVoiceLocale, 'es-ES');
+
+    expect(LanguageManager.alignToText('IOV switch to English'), 'en');
+    expect(LanguageManager.activeVoiceLocale, 'en-US');
   });
 
   test('automatic mode detects non Latin scripts', () {
@@ -70,5 +105,20 @@ void main() {
     expect(LanguageManager.activeVoiceLocale, 'ja-JP');
     expect(LanguageManager.alignToText('안녕하세요'), 'ko');
     expect(LanguageManager.activeVoiceLocale, 'ko-KR');
+  });
+
+  test('uses short confirmation prompt for sensitive actions', () {
+    LanguageManager.setLanguage('es_ES');
+
+    expect(
+      LanguageManager.confirmationRequired('RUN_FLUTTER'),
+      'Permiso para iniciar Flutter. Confirma: sí o no.',
+    );
+
+    LanguageManager.setLanguage('en_US');
+    expect(
+      LanguageManager.confirmationRequired('RUN_FLUTTER'),
+      'Permission to start Flutter. Confirm: yes or no.',
+    );
   });
 }

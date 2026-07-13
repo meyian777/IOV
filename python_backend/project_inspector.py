@@ -25,7 +25,7 @@ TECHNOLOGY_MARKERS = {
 
 class ProjectInspector:
     @staticmethod
-    def inspect(project_path: str) -> dict:
+    def inspect(project_path: str, diagnostics: dict | None = None) -> dict:
         root = Path(project_path).expanduser().resolve()
 
         if not root.is_dir():
@@ -56,7 +56,7 @@ class ProjectInspector:
         technology_text = ", ".join(technologies) if technologies else "Unknown"
         git_text = git.get("summary", "Git unavailable")
 
-        return {
+        result = {
             "success": True,
             "message": (
                 f"Project {root.name} uses {technology_text}. "
@@ -71,6 +71,19 @@ class ProjectInspector:
                 "git": git,
             },
         }
+
+        if diagnostics is not None:
+            result["diagnostics"] = diagnostics
+            result["explanation"] = ProjectInspector._explain(
+                root.name,
+                technology_text,
+                file_count,
+                git_text,
+                diagnostics,
+            )
+            result["message"] = result["explanation"]["summary"]
+
+        return result
 
     @staticmethod
     def _git_status(root: Path) -> dict:
@@ -111,4 +124,48 @@ class ProjectInspector:
             "clean": changed_files == 0,
             "changed_files": changed_files,
             "summary": summary,
+        }
+
+    @staticmethod
+    def _explain(
+        project_name: str,
+        technology_text: str,
+        file_count: int,
+        git_text: str,
+        diagnostics: dict,
+    ) -> dict:
+        checks = diagnostics.get("checks", [])
+        summary = diagnostics.get("summary", {})
+        failed_checks = [
+            check.get("name", "Unknown check")
+            for check in checks
+            if not check.get("success")
+        ]
+
+        if not checks:
+            diagnostics_text = diagnostics.get(
+                "message",
+                "No supported diagnostics were found.",
+            )
+            next_action = "Review project structure and configure diagnostics"
+        elif failed_checks:
+            diagnostics_text = (
+                f"{summary.get('passed', 0)} checks passed and "
+                f"{summary.get('failed', len(failed_checks))} failed: "
+                f"{', '.join(failed_checks)}."
+            )
+            next_action = "Review failed diagnostics"
+        else:
+            diagnostics_text = (
+                f"All {summary.get('passed', len(checks))} diagnostic checks passed."
+            )
+            next_action = "Choose the next development task"
+
+        return {
+            "summary": (
+                f"Project {project_name} uses {technology_text}. "
+                f"I found {file_count} files. {git_text} {diagnostics_text}"
+            ),
+            "diagnostics": diagnostics_text,
+            "next_action": next_action,
         }

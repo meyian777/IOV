@@ -33,6 +33,32 @@ class ProjectInspectorTest(unittest.TestCase):
             self.assertEqual(result["project"]["key_files"], ["pubspec.yaml"])
             self.assertTrue(result["project"]["git"]["available"])
 
+    def test_explains_diagnostics_in_inspection_result(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            (project / "requirements.txt").write_text(
+                "fastapi\n",
+                encoding="utf-8",
+            )
+            diagnostics = {
+                "success": False,
+                "message": "Diagnostics completed: 1 passed and 1 failed.",
+                "summary": {"total": 2, "passed": 1, "failed": 1},
+                "checks": [
+                    {"name": "Python lint", "success": True},
+                    {"name": "Python tests", "success": False},
+                ],
+            }
+
+            result = ProjectInspector.inspect(str(project), diagnostics)
+
+            self.assertIn("diagnostics", result)
+            self.assertIn("Python tests", result["explanation"]["diagnostics"])
+            self.assertEqual(
+                result["explanation"]["next_action"],
+                "Review failed diagnostics",
+            )
+
     def test_rejects_missing_directory(self):
         result = ProjectInspector.inspect("/path/that/does/not/exist")
 

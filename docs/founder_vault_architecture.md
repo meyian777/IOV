@@ -1,4 +1,4 @@
-# LabVoice Founder Vault
+# OSvoz Founder Vault
 
 ## Objective
 
@@ -11,7 +11,7 @@ the plaintext without an explicit founder authentication event.
 - Never store the decryption key in source code, Git, application assets,
   prompts, logs, analytics, backups, or the same database as the ciphertext.
 - Keep public biography and private founder records as separate data classes.
-- Deny private-profile access by default, including to LabVoice and coding
+- Deny private-profile access by default, including to OSvoz and coding
   agents.
 - Decrypt only after fresh founder authentication and only for the requested
   operation.

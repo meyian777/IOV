@@ -13,7 +13,9 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>$(PRODUCT_NAME)</string>
+	<string>IOV</string>
+	<key>CFBundleDisplayName</key>
+	<string>IOV</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -27,10 +29,10 @@
 	<key>NSMainNibFile</key>
 	<string>MainMenu</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>LabVoice uses the microphone to receive developer commands by voice.</string>
+	<string>IOV uses the microphone so you can control your work by voice without relying on keyboard or touch.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>LabVoice converts spoken developer commands into text so they can be understood and executed safely.</string>
+	<string>IOV converts your spoken commands into text so they can be understood and executed safely.</string>
 </dict>
 </plist>

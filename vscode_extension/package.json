@@ -1,7 +1,7 @@
 {
   "name": "labvoice-vscode-bridge",
-  "displayName": "LabVoice VS Code Bridge",
-  "description": "Connects the active VS Code workspace to LabVoice.",
+  "displayName": "OSvoz VS Code Bridge",
+  "description": "Connects the active VS Code workspace to OSvoz.",
   "version": "0.1.0",
   "publisher": "ianmey",
   "engines": {
@@ -19,35 +19,35 @@
     "commands": [
       {
         "command": "labvoice.connect",
-        "title": "LabVoice: Connect to Current Workspace"
+        "title": "OSvoz: Connect to Current Workspace"
       },
       {
         "command": "labvoice.syncContext",
-        "title": "LabVoice: Synchronize Editor Context"
+        "title": "OSvoz: Synchronize Editor Context"
       },
       {
         "command": "labvoice.describeContext",
-        "title": "LabVoice: Describe Current Context"
+        "title": "OSvoz: Describe Current Context"
       },
       {
         "command": "labvoice.undoLastEdit",
-        "title": "LabVoice: Undo Last Applied Edit"
+        "title": "OSvoz: Undo Last Applied Edit"
       }
     ],
     "configuration": {
-      "title": "LabVoice",
+      "title": "OSvoz",
       "properties": {
         "labvoice.backendUrl": {
           "type": "string",
           "default": "http://127.0.0.1:8000",
-          "description": "Local LabVoice backend URL."
+          "description": "Local OSvoz backend URL."
         },
         "labvoice.maxWorkspaceFiles": {
           "type": "number",
           "default": 5000,
           "minimum": 100,
           "maximum": 5000,
-          "description": "Maximum number of workspace paths shared with LabVoice."
+          "description": "Maximum number of workspace paths shared with OSvoz."
         }
       }
     }

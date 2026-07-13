@@ -13,11 +13,29 @@ void main() {
   test('accepts wake word and extracts command', () {
     final gate = WakeWordGate();
 
-    final result = gate.evaluate('LabVoice, abre el proyecto');
+    final result = gate.evaluate('OSvoz, abre el proyecto');
 
     expect(result.accepted, isTrue);
     expect(result.activated, isTrue);
     expect(result.command, 'abre el proyecto');
+  });
+
+  test('accepts spaced OS voz wake word variant', () {
+    final gate = WakeWordGate();
+
+    final result = gate.evaluate('OS voz abre visual studio code');
+
+    expect(result.accepted, isTrue);
+    expect(result.activated, isTrue);
+    expect(result.command, 'abre visual studio code');
+  });
+
+  test('does not accept old wake word aliases', () {
+    final gate = WakeWordGate();
+
+    expect(gate.evaluate('iVOZ abre visual studio code').accepted, isFalse);
+    expect(gate.evaluate('LabVoice abre visual studio code').accepted, isFalse);
+    expect(gate.evaluate('la boyce abre visual studio code').accepted, isFalse);
   });
 
   test('accepts natural follow-up during active conversation', () {
@@ -26,7 +44,7 @@ void main() {
       sessionDuration: const Duration(seconds: 35),
       clock: () => now,
     );
-    gate.evaluate('LabVoice, revisa el archivo');
+    gate.evaluate('OSvoz, revisa el archivo');
     now = now.add(const Duration(seconds: 10));
 
     final result = gate.evaluate('continúa');
@@ -41,7 +59,7 @@ void main() {
       sessionDuration: const Duration(seconds: 35),
       clock: () => now,
     );
-    gate.evaluate('LabVoice, revisa el archivo');
+    gate.evaluate('OSvoz, revisa el archivo');
     now = now.add(const Duration(seconds: 36));
 
     expect(gate.evaluate('continúa').accepted, isFalse);

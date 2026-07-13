@@ -22,6 +22,7 @@ coverage.xml
 *.db-wal
 *.sqlite
 *.sqlite3
+python_backend/data/speaker_voiceprint*.json
 
 # Flutter / Dart
 **/.dart_tool/
@@ -38,3 +39,6 @@ coverage.xml
 
 # Local logs
 *.log
+native_core/target/
+python_backend/bin/labvoice-native-core
+python_backend/models/*.bin

@@ -1,8 +1,8 @@
 {
-  "project": "LabVoice",
-  "last_task": "Transform LabVoice into a Developer Operating System",
-  "next_task": "Create Python Executor",
-  "last_file": "lib/main.dart",
+  "project": "iVOZ",
+  "last_task": "Stress test ML provider compatibility",
+  "next_task": "Create isolated ML runtime for provider-backed embeddings",
+  "last_file": "python_backend/ml_provider.py",
   "status": "In Progress",
   "owner": "Ian",
   "version": "0.2"

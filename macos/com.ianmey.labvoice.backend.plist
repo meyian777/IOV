@@ -7,19 +7,23 @@
   <string>com.ianmey.labvoice.backend</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/ianmey/Desktop/ian_labvoice/python_backend/venv/bin/python</string>
-    <string>-m</string>
-    <string>uvicorn</string>
-    <string>main:app</string>
-    <string>--app-dir</string>
-    <string>/Users/ianmey/Desktop/ian_labvoice/python_backend</string>
-    <string>--host</string>
-    <string>127.0.0.1</string>
-    <string>--port</string>
-    <string>8000</string>
+    <string>/private/tmp/labvoice-backend-venv312/bin/python</string>
+    <string>-S</string>
+    <string>/private/tmp/labvoice-backend-runtime/run_backend.py</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>/Users/ianmey/Desktop/ian_labvoice/python_backend</string>
+  <string>/private/tmp/labvoice-backend-runtime</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>OSVOZ_ENV_FILE</key>
+    <string>/private/tmp/labvoice-backend.env</string>
+    <key>OSVOZ_SESSION_DATABASE</key>
+    <string>/private/tmp/labvoice-session.db</string>
+    <key>OSVOZ_AUDIT_DATABASE</key>
+    <string>/private/tmp/labvoice-audit.db</string>
+    <key>OSVOZ_NATIVE_CORE_PATH</key>
+    <string>/private/tmp/labvoice-backend-runtime/bin/labvoice-native-core</string>
+  </dict>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>

@@ -36,7 +36,7 @@ class WakeWordGate {
     }
 
     final wakeMatch = RegExp(
-      r'\b(?:lab\s*voice|labvoice|la\s*voz)\b',
+      r'\b(?:osvoz|os\s*voz)\b',
       caseSensitive: false,
     ).firstMatch(normalized);
     if (wakeMatch != null) {

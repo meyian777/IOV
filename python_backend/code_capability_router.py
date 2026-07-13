@@ -93,6 +93,8 @@ class CodeCapabilityRouter:
         "explain": (
             "explain",
             "explica",
+            "explícame",
+            "explicame",
             "what does",
             "qué hace",
             "que hace",

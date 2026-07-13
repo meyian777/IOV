@@ -1,4 +1,4 @@
-# LabVoice
+# iVOZ
 
 Voice-first developer operating system.
 
@@ -39,4 +39,4 @@ flutter run -d chrome
 
 ## Vision
 
-LabVoice is being built as a voice-first developer operating system capable of controlling projects, tools, agents, files and automation through natural language.
+iVOZ is being built as a voice-first developer operating system capable of controlling projects, tools, agents, files and automation through natural language.

@@ -35,3 +35,18 @@ class AuditStoreTest(unittest.TestCase):
 
             self.assertFalse(result["valid"])
             self.assertEqual(result["first_invalid_event_id"], 1)
+
+    def test_verify_recovers_missing_table(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "audit.db"
+            with sqlite3.connect(path) as connection:
+                connection.execute("CREATE TABLE unrelated (id INTEGER)")
+
+            store = AuditStore(str(path))
+            with sqlite3.connect(path) as connection:
+                connection.execute("DROP TABLE audit_events")
+
+            result = store.verify()
+
+            self.assertTrue(result["valid"])
+            self.assertEqual(result["event_count"], 0)

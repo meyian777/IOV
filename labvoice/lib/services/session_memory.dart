@@ -7,7 +7,7 @@ import 'labvoice_api.dart';
 class SessionMemory {
   static Future<SessionState> loadSessionState() async {
     try {
-      final result = await LabVoiceApi.getSession();
+      final result = await OSvozApi.getSession();
       return SessionState.fromJson(result["session"]);
     } catch (_) {
       final jsonString = await rootBundle.loadString(

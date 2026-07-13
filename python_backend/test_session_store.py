@@ -12,14 +12,14 @@ class SessionStoreTest(unittest.TestCase):
             store = SessionStore(str(database))
             store.update(
                 {
-                    "current_task": "Inspect LabVoice",
+                    "current_task": "Inspect OSvoz",
                     "last_action": "Read project state",
                 }
             )
 
             restored = SessionStore(str(database)).get()
 
-            self.assertEqual(restored["current_task"], "Inspect LabVoice")
+            self.assertEqual(restored["current_task"], "Inspect OSvoz")
             self.assertEqual(restored["last_action"], "Read project state")
             self.assertTrue(restored["updated_at"])
 

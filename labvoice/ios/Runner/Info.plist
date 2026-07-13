@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Labvoice</string>
+	<string>IOV</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -15,7 +15,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>labvoice</string>
+	<string>IOV</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -27,9 +27,9 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>LabVoice uses the microphone to receive developer commands by voice.</string>
+	<string>IOV uses the microphone so you can control your work by voice without relying on keyboard or touch.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>LabVoice converts spoken developer commands into text so they can be understood and executed safely.</string>
+	<string>IOV converts your spoken commands into text so they can be understood and executed safely.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
