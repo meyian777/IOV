@@ -1,9 +1,10 @@
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from threading import Lock
 
 
 class EditorContextStore:
+    CONNECTION_TTL = timedelta(seconds=45)
     MAX_WORKSPACE_ROOTS = 10
     MAX_WORKSPACE_FILES = 5000
     MAX_OPEN_FILES = 100
@@ -169,7 +170,16 @@ class EditorContextStore:
 
     def get(self) -> dict:
         with self._lock:
-            return deepcopy(self._context)
+            context = deepcopy(self._context)
+        updated_at = context.get("updated_at")
+        if context.get("connected") and updated_at:
+            try:
+                last_update = datetime.fromisoformat(updated_at)
+                if datetime.now(timezone.utc) - last_update > self.CONNECTION_TTL:
+                    context["connected"] = False
+            except (TypeError, ValueError):
+                context["connected"] = False
+        return context
 
     @staticmethod
     def prompt_context(context: dict) -> str:

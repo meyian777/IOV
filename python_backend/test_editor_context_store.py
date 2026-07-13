@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timedelta, timezone
 
 from editor_context_store import EditorContextStore
 
@@ -78,3 +79,12 @@ class EditorContextStoreTest(unittest.TestCase):
         self.assertIn("Document hash: hash", prompt)
         self.assertIn("Lint says hello", prompt)
         self.assertIn("void main() {}", prompt)
+
+    def test_context_disconnects_after_heartbeat_expires(self):
+        store = EditorContextStore()
+        store.update({"active_file": "/tmp/main.py"})
+        store._context["updated_at"] = (
+            datetime.now(timezone.utc) - timedelta(seconds=46)
+        ).isoformat()
+
+        self.assertFalse(store.get()["connected"])

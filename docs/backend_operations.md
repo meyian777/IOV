@@ -34,6 +34,15 @@ The native authorization core must resolve to:
 python_backend/bin/labvoice-native-core
 ```
 
+The optional PyTorch audio-embedding provider can be installed without
+computer-vision dependencies:
+
+```bash
+/private/tmp/labvoice-backend-venv312/bin/python -m pip install \
+  -r python_backend/requirements-ml-pytorch.txt
+./scripts/install_macos_backend_service.sh
+```
+
 ## Core Routes
 
 | Route | Purpose | Expected local response |

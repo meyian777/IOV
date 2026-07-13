@@ -82,6 +82,36 @@ function isLocalFile(document) {
   return document && document.uri.scheme === "file";
 }
 
+function isWorkspaceDocument(document) {
+  return (
+    isLocalFile(document) &&
+    vscode.workspace.getWorkspaceFolder(document.uri) !== undefined
+  );
+}
+
+function isExcludedWorkspacePath(filePath) {
+  const normalized = String(filePath || "").replaceAll("\\", "/").toLowerCase();
+  const segments = normalized.split("/");
+  const excludedSegments = new Set([
+    ".git",
+    ".dart_tool",
+    ".pytest_cache",
+    ".venv",
+    "__pycache__",
+    "build",
+    "ephemeral",
+    "node_modules",
+    "pods",
+    "target",
+    "venv",
+  ]);
+  if (segments.some((segment) => excludedSegments.has(segment))) return true;
+  return (
+    normalized.includes("/python_backend/models/") ||
+    normalized.includes("/python_backend/data/")
+  );
+}
+
 function isSensitivePath(filePath) {
   const normalized = String(filePath || "").replaceAll("\\", "/").toLowerCase();
   const name = normalized.split("/").pop() || "";
@@ -102,11 +132,11 @@ async function collectContext() {
   const workspaceRoots = workspaceFolders.map((folder) => folder.uri.fsPath);
   const files = await vscode.workspace.findFiles(
     "**/*",
-    "**/{.git,node_modules,.dart_tool,build,venv,.venv,__pycache__,Pods,ephemeral,.idea}/**",
+    "**/{.git,node_modules,.dart_tool,.pytest_cache,build,target,venv,.venv,__pycache__,Pods,ephemeral,.idea}/**",
     maxFiles,
   );
   const editor = vscode.window.activeTextEditor;
-  const document = editor && isLocalFile(editor.document)
+  const document = editor && isWorkspaceDocument(editor.document)
     ? editor.document
     : null;
   const activeFileIsSensitive = document
@@ -120,7 +150,8 @@ async function collectContext() {
     ? vscode.languages.getDiagnostics(document.uri).slice(0, 50)
     : [];
   const openFiles = vscode.workspace.textDocuments
-    .filter(isLocalFile)
+    .filter(isWorkspaceDocument)
+    .filter((item) => !isSensitivePath(item.uri.fsPath))
     .slice(0, 100)
     .map((item) => item.uri.fsPath);
   const documentText =
@@ -133,6 +164,7 @@ async function collectContext() {
     workspace_roots: workspaceRoots,
     workspace_files: files
       .filter((uri) => !isSensitivePath(uri.fsPath))
+      .filter((uri) => !isExcludedWorkspacePath(uri.fsPath))
       .map((uri) => vscode.workspace.asRelativePath(uri, false)),
     open_files: openFiles,
     active_file: document ? document.uri.fsPath : "",
@@ -186,11 +218,11 @@ function setStatus(connected, detail = "") {
   };
 }
 
-async function synchronize(showMessage = false) {
+async function synchronize(showMessage = false, force = false) {
   try {
     const context = await collectContext();
     const signature = documentHash(JSON.stringify(context));
-    if (!showMessage && signature === lastContextSignature) {
+    if (!showMessage && !force && signature === lastContextSignature) {
       setStatus(true);
       return;
     }
@@ -488,7 +520,7 @@ function activate(extensionContext) {
   synchronize(false);
   scheduleOperationPoll(extensionContext, OPERATION_ACTIVE_POLL_MS);
   contextHeartbeatTimer = setInterval(
-    () => synchronize(false),
+    () => synchronize(false, true),
     CONTEXT_HEARTBEAT_MS,
   );
 }

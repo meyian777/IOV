@@ -75,3 +75,40 @@ class VoiceApiTest(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 415)
+
+    @patch("main.speaker_identity_service.verify_details")
+    def test_verifies_speaker_audio_without_executing_action(self, verify):
+        verify.return_value = {
+            "success": True,
+            "verified": True,
+            "distance": 0.04,
+            "threshold": 0.18,
+        }
+
+        response = TestClient(app).post(
+            "/speaker/verify",
+            content=b"RIFF-voice-sample",
+            headers={"content-type": "audio/wav"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["verified"])
+        verify.assert_called_once_with(b"RIFF-voice-sample")
+
+    @patch("main.speaker_identity_service.verify_details")
+    def test_speaker_verification_fails_closed_before_enrollment(self, verify):
+        verify.return_value = {
+            "success": False,
+            "verified": False,
+            "error": "speaker_not_enrolled",
+            "message": "Speaker identity has not been enrolled.",
+        }
+
+        response = TestClient(app).post(
+            "/speaker/verify",
+            content=b"RIFF-voice-sample",
+            headers={"content-type": "audio/wav"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["verified"])

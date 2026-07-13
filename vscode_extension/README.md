@@ -52,3 +52,15 @@ Development Host, open the OSvoz project and run:
 `OSvoz: Connect to Current Workspace`
 
 The lower status bar will announce whether OSvoz is connected.
+
+## Install locally
+
+Install the current workspace version into VS Code with:
+
+```bash
+./scripts/install_vscode_extension.sh
+```
+
+Restart VS Code after updating the extension files. The extension sends a
+forced heartbeat every 15 seconds, so the backend reconnects even when the
+active editor context did not change.

@@ -406,6 +406,42 @@ class OSvozApi {
     }
   }
 
+  static Future<Map<String, dynamic>> speakerStatus() async {
+    return _request("GET", "/speaker/status");
+  }
+
+  static Future<Map<String, dynamic>> verifySpeaker(
+    Uint8List audioBytes,
+  ) async {
+    final uri = Uri.parse("$baseUrl/speaker/verify");
+    final stopwatch = Stopwatch()..start();
+    try {
+      final response = await _client
+          .post(uri, headers: {"Content-Type": "audio/wav"}, body: audioBytes)
+          .timeout(const Duration(seconds: 30));
+      _recordLatency("POST /speaker/verify", stopwatch.elapsed);
+      return _decodeResponse(response);
+    } on TimeoutException {
+      _recordLatency("POST /speaker/verify", stopwatch.elapsed);
+      throw const OSvozApiException(
+        "Voice verification timed out.",
+        code: "timeout",
+      );
+    } on http.ClientException {
+      _recordLatency("POST /speaker/verify", stopwatch.elapsed);
+      throw const OSvozApiException(
+        "OSvoz backend is unavailable.",
+        code: "backend_unavailable",
+      );
+    } on FormatException {
+      _recordLatency("POST /speaker/verify", stopwatch.elapsed);
+      throw const OSvozApiException(
+        "OSvoz backend returned an invalid voice verification response.",
+        code: "invalid_response",
+      );
+    }
+  }
+
   static Future<Map<String, dynamic>> enterpriseCapabilities() async {
     return _request("GET", "/auth/enterprise/capabilities");
   }

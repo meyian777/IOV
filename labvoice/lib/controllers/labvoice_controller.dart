@@ -1785,6 +1785,22 @@ class OSvozController extends ChangeNotifier {
     operatorStatus: "Identidad de voz actualizada",
   );
 
+  Future<void> voiceVerificationResult({
+    required String heard,
+    required bool verified,
+    required String response,
+    required String action,
+  }) => _update(
+    heard: heard,
+    response: response,
+    intent: "speaker_verification",
+    action: action,
+    security: verified ? "Voice identity verified" : "Blocked",
+    operatorStatus: verified
+        ? "Identidad de voz confirmada"
+        : "Identidad de voz no confirmada",
+  );
+
   Future<void> _failure(
     String heard,
     String message,

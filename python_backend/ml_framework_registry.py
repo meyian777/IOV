@@ -37,7 +37,7 @@ class MLFrameworkRegistry:
             "role": "audio_embedding_and_experimental_model_boundary",
             "python_min": (3, 10),
             "python_max": (3, 14),
-            "install_command": "pip install torch torchvision",
+            "install_command": "pip install torch",
         },
     )
 

@@ -380,6 +380,14 @@ class _OSvozCommandCenterState extends State<OSvozCommandCenter>
           _scheduleRearm();
           return;
         }
+        if (_isVoiceVerificationCommand(noiseDecision.cleanedTranscript)) {
+          await _verifySpeakerFromAudio(
+            noiseDecision.cleanedTranscript,
+            result.rawAudioBytes,
+          );
+          _scheduleRearm();
+          return;
+        }
         final decision = _wakeWordGate.evaluate(
           noiseDecision.cleanedTranscript,
         );
@@ -604,6 +612,16 @@ class _OSvozCommandCenterState extends State<OSvozCommandCenter>
         normalized.contains("register my voice");
   }
 
+  bool _isVoiceVerificationCommand(String transcript) {
+    final normalized = transcript.toLowerCase();
+    return normalized.contains("verifica mi voz") ||
+        normalized.contains("verificar mi voz") ||
+        normalized.contains("confirma mi voz") ||
+        normalized.contains("confirmar mi voz") ||
+        normalized.contains("verify my voice") ||
+        normalized.contains("confirm my voice");
+  }
+
   Future<void> _enrollSpeakerFromAudio(
     String transcript,
     List<int> audioBytes,
@@ -641,6 +659,52 @@ class _OSvozCommandCenterState extends State<OSvozCommandCenter>
       );
       _setVoiceDebug(
         status: "Falló identidad de voz.",
+        error: "${error.code ?? "error"}: ${error.message}",
+      );
+    }
+  }
+
+  Future<void> _verifySpeakerFromAudio(
+    String transcript,
+    List<int> audioBytes,
+  ) async {
+    _setVoiceDebug(status: "Verificando identidad de voz...");
+    try {
+      final result = await OSvozApi.verifySpeaker(
+        Uint8List.fromList(audioBytes),
+      );
+      final verified = result["verified"] == true;
+      final error = result["error"]?.toString();
+      final distance = result["distance"]?.toString();
+      await _controller.voiceVerificationResult(
+        heard: transcript,
+        verified: verified,
+        response: verified
+            ? "Voz confirmada localmente. Tu identidad de voz coincide."
+            : error == "speaker_not_enrolled"
+            ? "Todavía necesito al menos tres muestras. Di: IOV, registra mi voz."
+            : "La voz no coincide con el perfil local. No autoricé ninguna acción.",
+        action: verified
+            ? "Local speaker identity verified."
+            : error ?? "speaker_voice_mismatch",
+      );
+      _setVoiceDebug(
+        status: verified
+            ? "Identidad de voz confirmada."
+            : "Identidad de voz no confirmada.",
+        error: verified
+            ? "Sin errores${distance == null ? "." : " · distancia=$distance"}"
+            : error ?? "voice_mismatch",
+      );
+    } on OSvozApiException catch (error) {
+      await _controller.voiceVerificationResult(
+        heard: transcript,
+        verified: false,
+        response: "No pude verificar tu voz: ${error.message}",
+        action: error.code ?? "speaker_verification_failed",
+      );
+      _setVoiceDebug(
+        status: "Falló la verificación de voz.",
         error: "${error.code ?? "error"}: ${error.message}",
       );
     }
