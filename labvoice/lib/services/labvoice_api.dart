@@ -46,6 +46,10 @@ class OSvozApi {
     return _request("GET", "/session");
   }
 
+  static Future<Map<String, dynamic>> getEditorContext() async {
+    return _request("GET", "/editor/context");
+  }
+
   static Future<bool> isBackendAvailable({
     Duration timeout = const Duration(milliseconds: 350),
   }) async {

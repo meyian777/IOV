@@ -2,7 +2,7 @@
 
 ## Objetivo
 
-La puerta de sesion protege el inicio de OSvoz antes de abrir el command center. El usuario debe entender siempre en que etapa esta el sistema y poder avanzar con voz cuando la identidad ya fue validada.
+La puerta de sesion protege el inicio de OSvoz antes de abrir el command center. La voz inicia el flujo y alinea el idioma; la autenticacion local del sistema confirma la identidad y abre la app sin pedir una tercera frase.
 
 ## Flujo actual
 
@@ -10,8 +10,7 @@ La puerta de sesion protege el inicio de OSvoz antes de abrir el command center.
 2. `Idioma`: OSvoz alinea el idioma inicial segun la frase hablada.
 3. `Presencia`: OSvoz intenta validar de forma silenciosa si el usuario origen esta presente, por ejemplo con Apple Watch cercano, sesion local confiable o dispositivo ya autorizado.
 4. `Identidad`: si la presencia no basta, macOS valida al usuario con `LocalAuthentication`, usando Face ID, Touch ID o autenticacion local disponible.
-5. `Voz`: OSvoz escucha una frase de confirmacion, por ejemplo: `OSvoz, soy Ian y autorizo esta sesion`.
-6. `Sesion activa`: el command center se abre solo cuando presencia/identidad y voz fueron aceptadas.
+5. `Sesion activa`: el command center se abre inmediatamente cuando la identidad local fue aceptada.
 
 ## Estados visibles
 
@@ -19,16 +18,15 @@ La puerta de sesion protege el inicio de OSvoz antes de abrir el command center.
 - `Sesion solicitada`: el usuario pidio entrar por voz y el idioma quedo alineado.
 - `Confirmando presencia`: OSvoz intenta comprobar el usuario origen de forma silenciosa.
 - `Verificando identidad`: macOS esta mostrando la validacion biometrica/local.
-- `Rostro verificado`: la identidad local paso.
-- `Escuchando confirmacion`: OSvoz espera la frase hablada.
+- `Identidad verificada`: la identidad local paso y OSvoz abre el command center.
 - `Sesion activa`: la app entra al command center.
-- `blocked`: el usuario puede reintentar si falla biometria o voz.
+- `blocked`: el usuario puede reintentar si falla la biometria.
 
 ## Consideraciones de seguridad
 
 - OSvoz no guarda datos biometricos. La verificacion queda delegada a macOS.
 - La voz no es un secreto. OSvoz no debe pedir PIN, codigo o password hablado.
-- La confirmacion por voz no reemplaza la biometria; funciona como segunda senal de intencion y presencia.
+- Voice ID es opcional durante el uso y puede reforzar acciones posteriores segun su riesgo; no bloquea el inicio despues de una biometria valida.
 - La identidad fuerte debe venir del dispositivo origen: Face ID, Touch ID, Secure Enclave, passkeys o autenticacion local equivalente.
 - Apple Watch puede actuar como senal de presencia cercana, pero no debe ser el unico factor para acciones sensibles.
 - En lugares publicos, el usuario debe poder iniciar con voz sin revelar credenciales: `inicia mi sesion` solo dispara la autenticacion privada del dispositivo.
@@ -45,33 +43,31 @@ La puerta de sesion protege el inicio de OSvoz antes de abrir el command center.
 2. Confirmar que aparece la puerta de sesion antes del command center.
 3. Decir: `inicia mi sesion` o `start my session`.
 4. Completar Face ID, Touch ID o autenticacion local.
-5. Decir: `OSvoz, soy Ian y autorizo esta sesion`.
-6. Verificar que el command center se abre sin usar mouse ni teclado.
-7. Tocar el microfono y preguntar: `ok, en que estamos trabajando`.
-8. Confirmar que aparece `Estoy pensando...` y luego una respuesta, no `ambient_speech_ignored`.
+5. Verificar que el command center se abre directamente, sin pedir confirmacion de voz.
+6. Tocar el microfono y preguntar: `ok, en que estamos trabajando`.
+7. Confirmar que aparece `Estoy pensando...` y luego una respuesta, no `ambient_speech_ignored`.
+8. Decir `IOV, abre Terminal` y confirmar que la orden se interpreta y ejecuta.
 
 ## Escenarios automatizados cubiertos
 
 - Inicio por voz: detecta `inicia mi sesion`, `start my session` y `sign me in`.
-- Voz confirmada: abre el command center despues de intencion hablada, identidad y voz.
-- Voz no confirmada: bloquea el acceso, muestra `Voz no confirmada`, conserva la transcripcion escuchada y permite `Reintentar voz`.
+- Biometria confirmada: abre el command center despues de la intencion hablada sin invocar la confirmacion de voz.
+- Gate de dos pasos: muestra solo `Idioma` e `Identidad`; no muestra `Voz`, `Confirmacion` ni `Reintentar voz`.
 - Identidad local fallida: mantiene al usuario en el gate, muestra `No pude verificarte` y permite `Reintentar identidad`.
-- Cambio de idioma en confirmacion: si el usuario autoriza en ingles, el gate actualiza el idioma visible antes de entrar.
-- Recuperacion de idioma: si el usuario queda bloqueado por voz en el idioma equivocado, debe poder volver a elegir idioma sin reiniciar la app.
+- Idioma detectado: conserva ingles o español desde la frase inicial al entrar.
 
 ## Proxima tarea de UX por voz
 
-- Agregar comandos hablados dentro del gate: `atras`, `cambiar idioma`, `español`, `english`, `reintentar voz`.
+- Agregar comandos hablados dentro del gate: `atras`, `cambiar idioma`, `español` y `english`.
 - Mantener escritura como opcion secundaria, nunca como requisito para iniciar sesion.
-- Permitir que OSvoz comprenda la frase de autorizacion en el idioma hablado, aunque el idioma inicial haya quedado mal configurado.
-- Mostrar siempre el estado actual y la siguiente frase esperada, pero permitir corregir por voz.
+- Mostrar siempre el estado actual y la siguiente accion esperada, pero permitir corregir el idioma por voz.
 - Eliminar cualquier flujo que dependa de dictar un secreto en voz alta. Si se requiere una prueba adicional, debe ser biometrica, passkey, aprobacion silenciosa del dispositivo o confirmacion dentro de una app segura.
 - Integrar presencia confiable con Apple Watch/watchOS cuando sea posible: `OSvoz, estoy aqui` debe iniciar una validacion amigable y silenciosa antes de pedir Face ID.
 
 ## Fallos esperados y manejo
 
 - Biometria cancelada: mostrar estado bloqueado y permitir reintento.
-- Voz no reconocida: mantener al usuario en la etapa de voz y pedir repetir la frase.
+- Voz inicial no reconocida: mantener al usuario en la seleccion de idioma y pedir repetir la frase de inicio.
 - Idioma ambiguo: usar el idioma del sistema como base y realinear con la primera frase reconocida.
 - Backend lento: mostrar estado pendiente inmediatamente para evitar que la interfaz parezca congelada.
 - Factor fuerte faltante en accion critica: bloquear la accion, explicar el factor faltante y no ejecutar nada.

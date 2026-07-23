@@ -7,7 +7,7 @@ import '../services/language_manager.dart';
 import '../services/session_authenticator.dart';
 import 'labvoice_command_center.dart';
 
-enum SessionGatePhase { selectingLanguage, biometric, voice, ready, blocked }
+enum SessionGatePhase { selectingLanguage, biometric, ready, blocked }
 
 class SessionGate extends StatefulWidget {
   const SessionGate({
@@ -33,7 +33,6 @@ class _SessionGateState extends State<SessionGate> {
   bool _busy = false;
   bool _languageReady = false;
   bool _identityVerified = false;
-  bool _voiceVerified = false;
 
   @override
   void initState() {
@@ -62,7 +61,6 @@ class _SessionGateState extends State<SessionGate> {
       _phase = SessionGatePhase.selectingLanguage;
       _languageReady = false;
       _identityVerified = false;
-      _voiceVerified = false;
       _transcript = "";
       _title = _language == "English" ? "Listening" : "Escuchando";
       _detail = _language == "English"
@@ -109,7 +107,6 @@ class _SessionGateState extends State<SessionGate> {
       _phase = SessionGatePhase.selectingLanguage;
       _languageReady = false;
       _identityVerified = false;
-      _voiceVerified = false;
       _transcript = "";
       _title = "Elige tu idioma";
       _detail = "IOV escuchará en el idioma que elijas.";
@@ -126,7 +123,6 @@ class _SessionGateState extends State<SessionGate> {
       _phase = SessionGatePhase.selectingLanguage;
       _languageReady = false;
       _identityVerified = false;
-      _voiceVerified = false;
       _transcript = "";
       _language = profile.name;
       _recognitionLocale = profile.recognitionLocale ?? "es_ES";
@@ -154,7 +150,6 @@ class _SessionGateState extends State<SessionGate> {
         setState(() {
           _busy = false;
           _identityVerified = false;
-          _voiceVerified = false;
           _phase = SessionGatePhase.blocked;
           _title = "No pude verificarte";
           _detail = "Reintenta la verificación local para abrir IOV.";
@@ -164,71 +159,29 @@ class _SessionGateState extends State<SessionGate> {
       setState(() {
         _busy = false;
         _identityVerified = true;
-        _phase = SessionGatePhase.voice;
-        _title = "Rostro verificado";
+        _phase = SessionGatePhase.ready;
+        _title = "Identidad verificada";
         _detail = _language == "English"
-            ? "Now say: I authorize this session."
-            : "Ahora di: autorizo la sesión.";
+            ? "Local authentication completed. Opening IOV."
+            : "Autenticación local completada. Entrando a IOV.";
       });
       await Future<void>.delayed(const Duration(milliseconds: 450));
-      await _verifyVoice();
+      if (!mounted) return;
+      await widget.onSessionReady?.call();
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute<void>(builder: (_) => const OSvozCommandCenter()),
+      );
     } catch (error) {
       if (!mounted) return;
       setState(() {
         _busy = false;
         _identityVerified = false;
-        _voiceVerified = false;
         _phase = SessionGatePhase.blocked;
         _title = "Autenticación no disponible";
         _detail = error.toString();
       });
     }
-  }
-
-  Future<void> _verifyVoice() async {
-    if (_busy) return;
-    setState(() {
-      _busy = true;
-      _phase = SessionGatePhase.voice;
-      _title = "Escuchando confirmación";
-      _detail = _language == "English"
-          ? "Speak in English. IOV is listening in English."
-          : "Habla en español. IOV está escuchando en español.";
-      _transcript = "";
-    });
-    final result = await widget.authenticator.verifyVoice(
-      recognitionLocale: _recognitionLocale,
-    );
-    if (!mounted) return;
-    setState(() {
-      _busy = false;
-      _transcript = result.transcript;
-      _language = LanguageManager.profileForLanguage(result.language).name;
-    });
-    if (!result.verified) {
-      setState(() {
-        _phase = SessionGatePhase.blocked;
-        _voiceVerified = false;
-        _title = "Voz no confirmada";
-        _detail = result.message;
-      });
-      return;
-    }
-    setState(() {
-      _voiceVerified = true;
-      _phase = SessionGatePhase.ready;
-      _title = "Sesión activa";
-      _detail = _language == "English"
-          ? "Identity confirmed in English. Opening IOV."
-          : "Identidad confirmada en español. Entrando a IOV.";
-    });
-    await Future<void>.delayed(const Duration(milliseconds: 650));
-    if (!mounted) return;
-    await widget.onSessionReady?.call();
-    if (!mounted) return;
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute<void>(builder: (_) => const OSvozCommandCenter()),
-    );
   }
 
   @override
@@ -333,7 +286,6 @@ class _SessionGateState extends State<SessionGate> {
     final steps = [
       ("Idioma", _languageReady, _language),
       ("Identidad", _identityVerified, "Sistema"),
-      ("Voz", _voiceVerified, "Confirmación"),
     ];
     return Row(
       children: [
@@ -387,9 +339,6 @@ class _SessionGateState extends State<SessionGate> {
     if (_busy) {
       return const Center(child: CircularProgressIndicator());
     }
-    final retryVoice =
-        _phase == SessionGatePhase.voice ||
-        (_phase == SessionGatePhase.blocked && _title.contains("Voz"));
     final retrySessionStart =
         _phase == SessionGatePhase.selectingLanguage ||
         (_phase == SessionGatePhase.blocked &&
@@ -401,23 +350,15 @@ class _SessionGateState extends State<SessionGate> {
           FilledButton.icon(
             onPressed: retrySessionStart
                 ? _listenForSessionStart
-                : retryVoice
-                ? _verifyVoice
                 : _authenticateBiometric,
             icon: Icon(
-              retrySessionStart || retryVoice
-                  ? Icons.mic_rounded
-                  : Icons.lock_open_rounded,
+              retrySessionStart ? Icons.mic_rounded : Icons.lock_open_rounded,
             ),
             label: Text(
-              retrySessionStart
-                  ? "Escuchar"
-                  : retryVoice
-                  ? "Reintentar voz"
-                  : "Reintentar identidad",
+              retrySessionStart ? "Escuchar" : "Reintentar identidad",
             ),
           ),
-          if (retryVoice || retrySessionStart) ...[
+          if (retrySessionStart) ...[
             const SizedBox(height: 12),
             TextButton.icon(
               key: const Key("change-session-language"),

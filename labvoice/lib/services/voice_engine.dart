@@ -12,10 +12,13 @@ class VoiceEngine {
   static const int maxSpeechCharacters = 3900;
   static final AudioPlayer _player = AudioPlayer();
   static final ValueNotifier<bool> speaking = ValueNotifier<bool>(false);
+  static final ValueNotifier<bool> paused = ValueNotifier<bool>(false);
   static int _speechGeneration = 0;
   static File? _activeAudioFile;
   static Process? _systemSpeechProcess;
   static StreamSubscription<void>? _completionSubscription;
+  static bool _ducked = false;
+  static bool _systemSpeechDucked = false;
 
   static Future<String?> speak(String text) async {
     if (text.trim().isEmpty) return null;
@@ -24,8 +27,11 @@ class VoiceEngine {
     await _player.stop();
     _systemSpeechProcess?.kill();
     _systemSpeechProcess = null;
+    _ducked = false;
+    _systemSpeechDucked = false;
     await _deleteActiveAudioFile();
     speaking.value = true;
+    paused.value = false;
 
     try {
       final ttsStopwatch = Stopwatch()..start();
@@ -78,8 +84,61 @@ class VoiceEngine {
     await _player.stop();
     _systemSpeechProcess?.kill();
     _systemSpeechProcess = null;
+    _ducked = false;
+    _systemSpeechDucked = false;
     speaking.value = false;
+    paused.value = false;
     await _deleteActiveAudioFile();
+  }
+
+  static Future<void> pause() async {
+    if (!speaking.value) return;
+    await restoreVolume();
+    final systemSpeech = _systemSpeechProcess;
+    if (systemSpeech != null) {
+      systemSpeech.kill(ProcessSignal.sigstop);
+    } else {
+      await _player.pause();
+    }
+    paused.value = true;
+    speaking.value = false;
+  }
+
+  static Future<void> resume() async {
+    if (!paused.value) return;
+    final systemSpeech = _systemSpeechProcess;
+    if (systemSpeech != null) {
+      systemSpeech.kill(ProcessSignal.sigcont);
+    } else {
+      await _player.resume();
+    }
+    paused.value = false;
+    speaking.value = true;
+  }
+
+  static Future<void> duck() async {
+    if (!speaking.value || _ducked) return;
+    _ducked = true;
+    final systemSpeech = _systemSpeechProcess;
+    if (systemSpeech != null) {
+      systemSpeech.kill(ProcessSignal.sigstop);
+      _systemSpeechDucked = true;
+      return;
+    }
+    await _player.setVolume(0.16);
+  }
+
+  static Future<void> restoreVolume() async {
+    if (!_ducked) return;
+    _ducked = false;
+    if (_systemSpeechDucked) {
+      _systemSpeechDucked = false;
+      if (!paused.value) {
+        _systemSpeechProcess?.kill(ProcessSignal.sigcont);
+      }
+      return;
+    }
+    await _player.setVolume(1.0);
   }
 
   static Future<void> setLanguage(String locale) async {

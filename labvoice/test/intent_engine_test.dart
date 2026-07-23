@@ -2,6 +2,21 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:labvoice/services/intent_engine.dart';
 
 void main() {
+  test('detecta navegación del narrador semántico', () {
+    expect(
+      IntentEngine.detectIntent('explica este archivo'),
+      'explain_active_file',
+    );
+    expect(
+      IntentEngine.detectIntent('continúa la explicación'),
+      'continue_semantic_narration',
+    );
+    expect(
+      IntentEngine.detectIntent('resume este archivo'),
+      'summarize_semantic_narration',
+    );
+  });
+
   test('detecta variantes habladas de diagnostico como run_diagnostics', () {
     final commands = [
       'haz una prueba del proyecto',

@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>IOV latency engineering</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+    body { background: #090b10; color: #d7dee9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    .window { width: 100vw; height: 100vh; background: #0d1117; border: 1px solid #2b313a; }
+    .titlebar { height: 44px; display: flex; align-items: center; padding: 0 16px; background: #171a20; border-bottom: 1px solid #292e36; }
+    .dots { display:flex; gap:8px; width: 130px; }
+    .dot { width:12px; height:12px; border-radius:50%; }
+    .red { background:#ff5f57 } .yellow { background:#febc2e } .green { background:#28c840 }
+    .title { flex:1; text-align:center; font-size:12px; color:#9ba5b4; }
+    .brand { width:130px; text-align:right; color:#54d6ff; font-size:12px; font-weight:700; letter-spacing:1.6px; }
+    .tabs { height: 38px; display:flex; align-items:end; padding-left: 54px; background:#11151b; border-bottom:1px solid #252b33; }
+    .tab { height:38px; padding:11px 18px 0; font:12px ui-monospace, SFMono-Regular, Menlo, monospace; color:#d1d7e0; background:#0d1117; border-top:2px solid #25b8e9; }
+    .workspace { display:grid; grid-template-columns: 54px minmax(0, 1fr) 330px; height: calc(100vh - 82px); }
+    .rail { background:#11151b; border-right:1px solid #252b33; padding-top:16px; color:#77808e; text-align:center; }
+    .rail div { margin: 0 auto 22px; width:28px; height:28px; display:grid; place-items:center; font-size:18px; }
+    .rail .active { color:#f2f6fb; border-left:2px solid #27c3f3; }
+    .editor { overflow:hidden; padding:17px 0 20px; font: 13px/1.47 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    .line { display:grid; grid-template-columns: 44px 1fr; min-height:19px; white-space:pre; }
+    .no { color:#4c5563; text-align:right; padding-right:14px; user-select:none; }
+    .code { color:#c9d1d9; }
+    .kw { color:#ff7ab2; } .type { color:#5dd8ff; } .str { color:#d9b65c; }
+    .num { color:#b89cff; } .fn { color:#8cdd7b; } .muted { color:#68717d; }
+    .cursorline { background:#151a22; }
+    .side { border-left:1px solid #252b33; background:#0f1319; padding:20px; }
+    .eyebrow { color:#7b8593; font-size:10px; font-weight:700; letter-spacing:1.5px; margin-bottom:9px; }
+    h1 { font-size:19px; margin:0 0 8px; color:#ecf5fb; font-weight:650; }
+    .desc { font-size:12px; line-height:1.55; color:#8f9aa8; margin-bottom:20px; }
+    .flow { margin: 15px 0 22px; }
+    .stage { border:1px solid #293642; border-radius:8px; padding:10px 12px; background:#121923; display:flex; justify-content:space-between; align-items:center; }
+    .stage span:first-child { color:#b9c6d1; font:11px ui-monospace, monospace; }
+    .budget { color:#4fd59a; font:11px ui-monospace, monospace; }
+    .arrow { color:#3a809b; height:17px; text-align:center; font-size:14px; }
+    .metric { margin-top:13px; }
+    .metric-head { display:flex; justify-content:space-between; font-size:10px; color:#8793a1; margin-bottom:6px; }
+    .bar { height:5px; background:#202934; border-radius:9px; overflow:hidden; }
+    .fill { height:100%; background:linear-gradient(90deg,#197ca8,#39d4ff); border-radius:9px; }
+    .footer { position:absolute; right:20px; bottom:16px; color:#596472; font-size:10px; letter-spacing:.8px; }
+  </style>
+</head>
+<body>
+  <div class="window">
+    <div class="titlebar">
+      <div class="dots"><i class="dot red"></i><i class="dot yellow"></i><i class="dot green"></i></div>
+      <div class="title">ian_labvoice — Visual Studio Code</div>
+      <div class="brand">IOV</div>
+    </div>
+    <div class="tabs"><div class="tab">voice_latency_metrics.dart</div></div>
+    <div class="workspace">
+      <aside class="rail"><div class="active">⌘</div><div>⌕</div><div>⑂</div><div>▷</div><div>⚙</div></aside>
+      <main class="editor">
+        <div class="line"><span class="no">1</span><span class="code"><span class="kw">class</span> <span class="type">VoiceLatencyMetrics</span> {</span></div>
+        <div class="line"><span class="no">2</span><span class="code">  <span class="kw">static const</span> <span class="type">Map</span>&lt;<span class="type">String</span>, <span class="type">int</span>&gt; targetsMs = {</span></div>
+        <div class="line"><span class="no">3</span><span class="code">    <span class="str">"feedback_ms"</span>: <span class="num">300</span>,</span></div>
+        <div class="line"><span class="no">4</span><span class="code">    <span class="str">"capture_ms"</span>: <span class="num">1200</span>,</span></div>
+        <div class="line"><span class="no">5</span><span class="code">    <span class="str">"transcription_ms"</span>: <span class="num">1500</span>,</span></div>
+        <div class="line"><span class="no">6</span><span class="code">    <span class="str">"intent_ms"</span>: <span class="num">100</span>,</span></div>
+        <div class="line"><span class="no">7</span><span class="code">    <span class="str">"backend_intent_ms"</span>: <span class="num">250</span>,</span></div>
+        <div class="line"><span class="no">8</span><span class="code">    <span class="str">"execution_ms"</span>: <span class="num">1200</span>,</span></div>
+        <div class="line"><span class="no">9</span><span class="code">    <span class="str">"tts_ms"</span>: <span class="num">1200</span>,</span></div>
+        <div class="line"><span class="no">10</span><span class="code">    <span class="str">"total_ms"</span>: <span class="num">2500</span>,</span></div>
+        <div class="line"><span class="no">11</span><span class="code">  };</span></div>
+        <div class="line"><span class="no">12</span><span class="code"></span></div>
+        <div class="line"><span class="no">13</span><span class="code">  <span class="kw">static final</span> <span class="type">Map</span>&lt;<span class="type">String</span>, <span class="type">int</span>&gt; _latest = {};</span></div>
+        <div class="line"><span class="no">14</span><span class="code"></span></div>
+        <div class="line cursorline"><span class="no">15</span><span class="code">  <span class="kw">static void</span> <span class="fn">record</span>(<span class="type">String</span> key, <span class="type">Duration</span> duration) {</span></div>
+        <div class="line"><span class="no">16</span><span class="code">    _latest[key] = duration.inMilliseconds;</span></div>
+        <div class="line"><span class="no">17</span><span class="code">    <span class="kw">if</span> (_latest.length &lt;= <span class="num">24</span>) <span class="kw">return</span>;</span></div>
+        <div class="line"><span class="no">18</span><span class="code">    _latest.remove(_latest.keys.first);</span></div>
+        <div class="line"><span class="no">19</span><span class="code">  }</span></div>
+        <div class="line"><span class="no">20</span><span class="code"></span></div>
+        <div class="line"><span class="no">21</span><span class="code">  <span class="kw">static</span> <span class="type">String</span> <span class="fn">compactSummary</span>() {</span></div>
+        <div class="line"><span class="no">22</span><span class="code">    <span class="kw">return</span> _latest.entries.map((entry) {</span></div>
+        <div class="line"><span class="no">23</span><span class="code">      <span class="kw">final</span> target = targetsMs[entry.key];</span></div>
+        <div class="line"><span class="no">24</span><span class="code">      <span class="kw">final</span> status = target != <span class="kw">null</span> &amp;&amp; entry.value &gt; target</span></div>
+        <div class="line"><span class="no">25</span><span class="code">          ? <span class="str">"slow"</span> : <span class="str">"ok"</span>;</span></div>
+        <div class="line"><span class="no">26</span><span class="code">      <span class="kw">return</span> <span class="str">"${entry.key} ${entry.value}ms · $status"</span>;</span></div>
+        <div class="line"><span class="no">27</span><span class="code">    }).join(<span class="str">"  |  "</span>);</span></div>
+        <div class="line"><span class="no">28</span><span class="code">  }</span></div>
+        <div class="line"><span class="no">29</span><span class="code">}</span></div>
+      </main>
+      <aside class="side">
+        <div class="eyebrow">IOV · LATENCY ENGINEERING</div>
+        <h1>Voice pipeline instrumentation</h1>
+        <div class="desc">Local timing boundaries recorded across capture, transcription, intent routing, execution and speech synthesis.</div>
+        <div class="flow">
+          <div class="stage"><span>Audio capture</span><span class="budget">≤ 1200 ms</span></div><div class="arrow">↓</div>
+          <div class="stage"><span>Whisper transcription</span><span class="budget">≤ 1500 ms</span></div><div class="arrow">↓</div>
+          <div class="stage"><span>Intent routing</span><span class="budget">≤ 250 ms</span></div><div class="arrow">↓</div>
+          <div class="stage"><span>Secure execution</span><span class="budget">≤ 1200 ms</span></div><div class="arrow">↓</div>
+          <div class="stage"><span>Voice response</span><span class="budget">≤ 1200 ms</span></div>
+        </div>
+        <div class="metric"><div class="metric-head"><span>LOCAL INFERENCE</span><span>INSTRUMENTED</span></div><div class="bar"><div class="fill" style="width:86%"></div></div></div>
+        <div class="metric"><div class="metric-head"><span>PIPELINE VISIBILITY</span><span>END-TO-END</span></div><div class="bar"><div class="fill" style="width:100%"></div></div></div>
+        <div class="footer">FLUTTER · DART · FASTAPI · WHISPER</div>
+      </aside>
+    </div>
+  </div>
+</body>
+</html>

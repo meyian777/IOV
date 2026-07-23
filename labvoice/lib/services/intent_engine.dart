@@ -113,6 +113,33 @@ class IntentEngine {
       return "edit_active_file";
     }
 
+    if (text.contains("explica este archivo") ||
+        text.contains("explica el archivo activo") ||
+        text.contains("analiza este archivo") ||
+        text.contains("explain this file") ||
+        text.contains("explain the active file") ||
+        text.contains("what does this file do")) {
+      return "explain_active_file";
+    }
+
+    if (text.contains("continúa la explicación") ||
+        text.contains("continua la explicacion") ||
+        text.contains("sigue con la explicación") ||
+        text.contains("sigue con la explicacion") ||
+        text.contains("continue the explanation") ||
+        text.contains("keep explaining")) {
+      return "continue_semantic_narration";
+    }
+
+    if (text.contains("resume este archivo") ||
+        text.contains("resumen de este archivo") ||
+        text.contains("resume la explicación") ||
+        text.contains("resume la explicacion") ||
+        text.contains("summarize this file") ||
+        text.contains("summarize the explanation")) {
+      return "summarize_semantic_narration";
+    }
+
     if (_requestsDiagnostics(text)) {
       return "run_diagnostics";
     }

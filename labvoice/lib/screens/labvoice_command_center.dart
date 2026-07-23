@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -8,11 +9,15 @@ import 'package:speech_to_text/speech_recognition_result.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
 import '../controllers/labvoice_controller.dart';
+import '../services/iov_interaction_state_machine.dart';
 import '../services/labvoice_api.dart';
 import '../services/language_manager.dart';
 import '../services/local_whisper_recorder.dart';
+import '../services/native_control_speech.dart';
 import '../services/voice_engine.dart';
+import '../services/voice_control_router.dart';
 import '../services/voice_echo_guard.dart';
+import '../services/voice_endpoint_detector.dart';
 import '../services/voice_fallback_policy.dart';
 import '../services/voice_latency_metrics.dart';
 import '../services/voice_noise_gate.dart';
@@ -30,9 +35,14 @@ class _OSvozCommandCenterState extends State<OSvozCommandCenter>
   final OSvozController _controller = OSvozController();
   final LocalWhisperRecorder _whisperRecorder = LocalWhisperRecorder();
   final SpeechToText _nativeSpeech = SpeechToText();
+  final NativeControlSpeech _controlSpeech = NativeControlSpeech();
   final WakeWordGate _wakeWordGate = WakeWordGate();
   final VoiceEchoGuard _echoGuard = VoiceEchoGuard();
+  final VoiceEndpointDetector _endpointDetector = VoiceEndpointDetector();
   final VoiceNoiseGate _voiceNoiseGate = VoiceNoiseGate();
+  final VoiceControlRouter _controlRouter = VoiceControlRouter();
+  final IOVInteractionStateMachine _interactionState =
+      IOVInteractionStateMachine();
   late final AnimationController _pulse;
   final bool _continuousListening = false;
   final bool _preferFastNativeSpeech = false;
@@ -41,12 +51,15 @@ class _OSvozCommandCenterState extends State<OSvozCommandCenter>
   bool _forceNativeSpeechOnce = false;
   bool _autoStoppingWhisper = false;
   bool _manualWhisperCapture = false;
+  bool _controlSpeechStarting = false;
+  bool _controlSpeechListening = false;
+  bool _handlingControlEvent = false;
   Timer? _rearmTimer;
   Timer? _captureMonitorTimer;
   StreamSubscription<Amplitude>? _amplitudeSubscription;
+  StreamSubscription<NativeControlSpeechEvent>? _controlSpeechSubscription;
+  Timer? _bargeInRestoreTimer;
   DateTime? _captureStartedAt;
-  DateTime? _lastVoiceAt;
-  bool _voiceDetectedInCapture = false;
   String _nativeTranscript = "";
   String _voiceDebugStatus = "Esperando prueba manual.";
   String _voiceDebugLanguage = "auto";
@@ -55,25 +68,25 @@ class _OSvozCommandCenterState extends State<OSvozCommandCenter>
   String _voiceDebugError = "Sin errores.";
   String _backendInterpretation = "Sin interpretación.";
   String _codeRoute = "Sin ruta de código.";
+  double _liveAmplitude = 0;
 
   static const Duration _amplitudeInterval = Duration(milliseconds: 120);
-  static const Duration _minimumCaptureWindow = Duration(milliseconds: 650);
-  static const Duration _initialSilenceTimeout = Duration(seconds: 3);
-  static const Duration _silenceAfterSpeech = Duration(milliseconds: 950);
-  static const Duration _maximumCaptureWindow = Duration(seconds: 12);
-  static const double _voiceThresholdDb = -43;
 
   @override
   void initState() {
     super.initState();
     _pulse = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1400),
+      duration: const Duration(milliseconds: 900),
       lowerBound: 0.92,
       upperBound: 1.06,
     );
     _controller.addListener(_refresh);
     VoiceEngine.speaking.addListener(_voiceStateChanged);
+    _controlSpeechSubscription = _controlSpeech.events.listen(
+      _controlSpeechEvent,
+      onError: (_) => _controlSpeechEnded(),
+    );
     unawaited(_initializeContinuousVoice());
   }
 
@@ -83,13 +96,18 @@ class _OSvozCommandCenterState extends State<OSvozCommandCenter>
   }
 
   void _refresh() {
-    if (_controller.isListening && !_pulse.isAnimating) {
+    _syncVoiceAnimation();
+    if (mounted) setState(() {});
+  }
+
+  void _syncVoiceAnimation() {
+    final active = _controller.isListening || VoiceEngine.speaking.value;
+    if (active && !_pulse.isAnimating) {
       _pulse.repeat(reverse: true);
-    } else if (!_controller.isListening && _pulse.isAnimating) {
+    } else if (!active && _pulse.isAnimating) {
       _pulse.stop();
       _pulse.value = 1;
     }
-    if (mounted) setState(() {});
   }
 
   @override
@@ -100,13 +118,21 @@ class _OSvozCommandCenterState extends State<OSvozCommandCenter>
     _pulse.dispose();
     _rearmTimer?.cancel();
     _cancelCaptureMonitor();
+    _bargeInRestoreTimer?.cancel();
+    unawaited(_controlSpeechSubscription?.cancel());
     unawaited(_whisperRecorder.dispose());
     unawaited(_nativeSpeech.cancel());
+    unawaited(_controlSpeech.stop());
     super.dispose();
   }
 
   void _voiceStateChanged() {
+    _syncVoiceAnimation();
+    if (mounted) setState(() {});
     if (VoiceEngine.speaking.value) {
+      if (_interactionState.state != IOVInteractionState.speaking) {
+        _interactionState.dispatch(IOVInteractionEvent.speak);
+      }
       _rearmTimer?.cancel();
       _cancelCaptureMonitor();
       unawaited(_whisperRecorder.stop());
@@ -114,10 +140,148 @@ class _OSvozCommandCenterState extends State<OSvozCommandCenter>
       _usingNativeSpeech = false;
       _controller.setListening(false);
       _echoGuard.markSpeechStarted(_controller.response);
+      unawaited(_startControlRouter());
       return;
     }
+    if (VoiceEngine.paused.value ||
+        _interactionState.state == IOVInteractionState.paused) {
+      unawaited(_startControlRouter());
+      return;
+    }
+    _interactionState.dispatch(IOVInteractionEvent.finish);
+    unawaited(_stopControlRouter());
     _echoGuard.markSpeechEnded();
     _scheduleRearm();
+  }
+
+  Future<void> _startControlRouter() async {
+    final state = _interactionState.state;
+    if (state != IOVInteractionState.speaking &&
+        state != IOVInteractionState.paused) {
+      return;
+    }
+    if (_controlSpeechStarting || _controlSpeechListening) return;
+    _controlSpeechStarting = true;
+    try {
+      _controlSpeechListening = await _controlSpeech.start(
+        locale: LanguageManager.activeVoiceLocale.replaceAll('-', '_'),
+      );
+    } catch (_) {
+      _controlSpeechListening = false;
+      _scheduleControlRouterRestart();
+    } finally {
+      _controlSpeechStarting = false;
+    }
+  }
+
+  Future<void> _stopControlRouter() async {
+    _controlSpeechListening = false;
+    _bargeInRestoreTimer?.cancel();
+    await VoiceEngine.restoreVolume();
+    await _controlSpeech.stop();
+  }
+
+  void _controlSpeechEvent(NativeControlSpeechEvent event) {
+    if (event.type == 'status') {
+      _setControlDebug('Control manos libres activo.');
+      return;
+    }
+    if (event.type == 'error') {
+      _setControlDebug(
+        'Canal de control no disponible: ${event.message ?? "error desconocido"}',
+      );
+      _controlSpeechEnded();
+      return;
+    }
+    if (event.type != 'transcript') return;
+    final transcript = event.transcript.trim();
+    _setControlDebug('Control oyó: $transcript');
+    if (_controlRouter.containsWakeWord(transcript)) {
+      unawaited(VoiceEngine.duck());
+      _bargeInRestoreTimer?.cancel();
+      _bargeInRestoreTimer = Timer(const Duration(milliseconds: 950), () {
+        unawaited(VoiceEngine.restoreVolume());
+      });
+    }
+    if (_handlingControlEvent) return;
+    final decision = _controlRouter.evaluate(
+      transcript,
+      confidence: event.confidence,
+    );
+    if (decision.accepted) {
+      _bargeInRestoreTimer?.cancel();
+      unawaited(_applyControlEvent(decision.event!, transcript));
+      return;
+    }
+    if (event.isFinal) {
+      unawaited(VoiceEngine.restoreVolume());
+      _controlSpeechEnded();
+    }
+  }
+
+  void _setControlDebug(String message) {
+    _voiceDebugStatus = message;
+    if (mounted) setState(() {});
+  }
+
+  void _controlSpeechEnded() {
+    _controlSpeechListening = false;
+    unawaited(VoiceEngine.restoreVolume());
+    _scheduleControlRouterRestart();
+  }
+
+  void _scheduleControlRouterRestart() {
+    if (!mounted ||
+        (_interactionState.state != IOVInteractionState.speaking &&
+            _interactionState.state != IOVInteractionState.paused)) {
+      return;
+    }
+    Future<void>.delayed(const Duration(milliseconds: 220), () {
+      if (mounted) unawaited(_startControlRouter());
+    });
+  }
+
+  Future<void> _applyControlEvent(
+    VoiceControlEvent event,
+    String transcript,
+  ) async {
+    if (_handlingControlEvent) return;
+    _handlingControlEvent = true;
+    await _stopControlRouter();
+    switch (event) {
+      case VoiceControlEvent.pause:
+        if (_interactionState.dispatch(IOVInteractionEvent.pause)) {
+          await VoiceEngine.pause();
+          _controller.narrationControlFeedback(
+            heard: transcript,
+            message: LanguageManager.text("En pausa.", "Paused."),
+            control: "pause",
+          );
+        }
+      case VoiceControlEvent.resume:
+        if (_interactionState.dispatch(IOVInteractionEvent.resume)) {
+          _controller.narrationControlFeedback(
+            heard: transcript,
+            message: LanguageManager.text("Continuando.", "Continuing."),
+            control: "resume",
+          );
+          await VoiceEngine.resume();
+        }
+      case VoiceControlEvent.stop:
+        _interactionState.dispatch(IOVInteractionEvent.stop);
+        await VoiceEngine.stop();
+        _controller.narrationControlFeedback(
+          heard: transcript,
+          message: LanguageManager.text("Me detuve.", "Stopped."),
+          control: "stop",
+        );
+    }
+    _handlingControlEvent = false;
+    if (mounted &&
+        (_interactionState.state == IOVInteractionState.speaking ||
+            _interactionState.state == IOVInteractionState.paused)) {
+      unawaited(_startControlRouter());
+    }
   }
 
   void _scheduleRearm([Duration delay = const Duration(milliseconds: 450)]) {
@@ -198,6 +362,7 @@ class _OSvozCommandCenterState extends State<OSvozCommandCenter>
     }
 
     _controller.setListening(true);
+    _interactionState.dispatch(IOVInteractionEvent.listen);
     _manualWhisperCapture = manual;
     _setVoiceDebug(
       status: "Micrófono activo. Habla y procesaré al detectar silencio.",
@@ -252,6 +417,7 @@ class _OSvozCommandCenterState extends State<OSvozCommandCenter>
       return;
     }
     _controller.setListening(true);
+    _interactionState.dispatch(IOVInteractionEvent.listen);
     _startingListener = false;
     await _nativeSpeech.listen(
       onResult: _nativeSpeechResult,
@@ -317,6 +483,7 @@ class _OSvozCommandCenterState extends State<OSvozCommandCenter>
     _cancelCaptureMonitor();
     _controller.setListening(false);
     _controller.processingCapturedVoice();
+    _interactionState.dispatch(IOVInteractionEvent.process);
     if (captureStartedAt != null) {
       VoiceLatencyMetrics.record(
         "capture_ms",
@@ -461,8 +628,7 @@ class _OSvozCommandCenterState extends State<OSvozCommandCenter>
     _cancelCaptureMonitor();
     final now = DateTime.now();
     _captureStartedAt = now;
-    _lastVoiceAt = null;
-    _voiceDetectedInCapture = false;
+    _endpointDetector.start(now);
     _autoStoppingWhisper = false;
     _setVoiceDebug(
       status: "Habla ahora. Cortaré automáticamente al terminar.",
@@ -480,15 +646,13 @@ class _OSvozCommandCenterState extends State<OSvozCommandCenter>
   void _handleAmplitudeChanged(Amplitude amplitude) {
     final now = DateTime.now();
     final current = amplitude.current;
-    if (current >= _voiceThresholdDb) {
-      _voiceDetectedInCapture = true;
-      _lastVoiceAt = now;
-    }
+    _liveAmplitude = ((current + 60) / 48).clamp(0.0, 1.0);
+    final decision = _endpointDetector.observe(current, now);
     _setVoiceDebug(
       audio:
-          "Nivel ${current.toStringAsFixed(1)} dB · max ${amplitude.max.toStringAsFixed(1)} dB",
+          "Nivel ${current.toStringAsFixed(1)} dB · ruido ${_endpointDetector.noiseFloorDb.toStringAsFixed(1)} dB · umbral ${_endpointDetector.voiceThresholdDb.toStringAsFixed(1)} dB",
     );
-    _evaluateAutoStop(now);
+    _applyEndpointDecision(decision);
   }
 
   void _evaluateAutoStop([DateTime? observedAt]) {
@@ -498,25 +662,18 @@ class _OSvozCommandCenterState extends State<OSvozCommandCenter>
         _autoStoppingWhisper) {
       return;
     }
-    final startedAt = _captureStartedAt;
-    if (startedAt == null) return;
     final now = observedAt ?? DateTime.now();
-    final elapsed = now.difference(startedAt);
-    if (elapsed >= _maximumCaptureWindow) {
-      unawaited(_autoStopWhisper("Límite máximo alcanzado."));
-      return;
-    }
-    if (!_voiceDetectedInCapture && elapsed >= _initialSilenceTimeout) {
-      unawaited(_autoStopWhisper("No detecté voz inicial."));
-      return;
-    }
-    final lastVoiceAt = _lastVoiceAt;
-    if (_voiceDetectedInCapture &&
-        lastVoiceAt != null &&
-        elapsed >= _minimumCaptureWindow &&
-        now.difference(lastVoiceAt) >= _silenceAfterSpeech) {
-      unawaited(_autoStopWhisper("Silencio detectado. Procesando."));
-    }
+    _applyEndpointDecision(_endpointDetector.evaluate(now));
+  }
+
+  void _applyEndpointDecision(VoiceEndpointDecision decision) {
+    final reason = switch (decision) {
+      VoiceEndpointDecision.initialSilence => "No detecté voz inicial.",
+      VoiceEndpointDecision.speechEnded => "Silencio detectado. Procesando.",
+      VoiceEndpointDecision.maximumDuration => "Límite máximo alcanzado.",
+      VoiceEndpointDecision.none => null,
+    };
+    if (reason != null) unawaited(_autoStopWhisper(reason));
   }
 
   Future<void> _autoStopWhisper(String reason) async {
@@ -532,8 +689,8 @@ class _OSvozCommandCenterState extends State<OSvozCommandCenter>
     unawaited(_amplitudeSubscription?.cancel());
     _amplitudeSubscription = null;
     _captureStartedAt = null;
-    _lastVoiceAt = null;
-    _voiceDetectedInCapture = false;
+    _endpointDetector.reset();
+    _liveAmplitude = 0;
   }
 
   bool _blockEcho(String transcript) {
@@ -741,6 +898,9 @@ class _OSvozCommandCenterState extends State<OSvozCommandCenter>
     return const Color(0xFF54D6B6);
   }
 
+  String _ui(String spanish, String english) =>
+      LanguageManager.text(spanish, english);
+
   Widget _voiceCore(ColorScheme colors) {
     final listening = _controller.isListening;
     final statusColor = _statusColor(colors);
@@ -752,21 +912,25 @@ class _OSvozCommandCenterState extends State<OSvozCommandCenter>
           : "Toca para activar el micrófono",
       child: GestureDetector(
         onTap: () => _listen(manual: true),
-        child: ScaleTransition(
-          scale: _pulse,
+        child: AnimatedBuilder(
+          animation: _pulse,
+          builder: (context, child) => Transform.scale(
+            scale: listening ? _pulse.value : 1,
+            child: child,
+          ),
           child: AnimatedContainer(
             key: const Key("voice-core"),
             duration: const Duration(milliseconds: 350),
-            width: 142,
-            height: 142,
+            width: 176,
+            height: 176,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
                 colors: listening
-                    ? [const Color(0xFF8C7CFF), const Color(0xFF4E5BFF)]
-                    : [const Color(0xFF252A3A), const Color(0xFF161925)],
+                    ? [const Color(0xFF1BD8FF), const Color(0xFF0868FF)]
+                    : [const Color(0xFF102D45), const Color(0xFF07121F)],
               ),
               border: Border.all(
                 color: statusColor.withValues(alpha: 0.75),
@@ -782,7 +946,7 @@ class _OSvozCommandCenterState extends State<OSvozCommandCenter>
             ),
             child: Icon(
               listening ? Icons.graphic_eq_rounded : Icons.mic_rounded,
-              size: 54,
+              size: 62,
               color: Colors.white,
             ),
           ),
@@ -795,17 +959,17 @@ class _OSvozCommandCenterState extends State<OSvozCommandCenter>
     width: double.infinity,
     padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 24),
     decoration: BoxDecoration(
-      color: const Color(0xFF171A26).withValues(alpha: 0.88),
-      borderRadius: BorderRadius.circular(28),
-      border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+      color: const Color(0xFF0B1722).withValues(alpha: 0.94),
+      borderRadius: BorderRadius.circular(18),
+      border: Border.all(color: const Color(0xFF1B3C55)),
     ),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          "OSvoz",
+          _ui("RESPUESTA", "RESPONSE"),
           style: theme.textTheme.labelMedium?.copyWith(
-            color: const Color(0xFF9B91FF),
+            color: const Color(0xFF29C8FF),
             letterSpacing: 2.4,
             fontWeight: FontWeight.w700,
           ),
@@ -846,23 +1010,444 @@ class _OSvozCommandCenterState extends State<OSvozCommandCenter>
       iconColor: Colors.white54,
       collapsedIconColor: Colors.white38,
       title: Text(
-        "Detalles del sistema",
+        _ui("Detalles del sistema", "System details"),
         style: theme.textTheme.labelLarge?.copyWith(color: Colors.white54),
       ),
       children: [
-        _detailRow("Idioma", _controller.activeLanguageName),
-        _detailRow("Voz", _voiceDebugStatus),
+        _detailRow(_ui("Idioma", "Language"), _controller.activeLanguageName),
+        _detailRow(_ui("Voz", "Voice"), _voiceDebugStatus),
         _detailRow("Whisper", "$_voiceDebugLanguage · $_voiceDebugLatency"),
         _detailRow("Audio", _voiceDebugAudio),
-        _detailRow("Latencia", VoiceLatencyMetrics.compactSummary()),
-        _detailRow("Error voz", _voiceDebugError),
+        _detailRow(
+          _ui("Latencia", "Latency"),
+          VoiceLatencyMetrics.compactSummary(),
+        ),
+        _detailRow(_ui("Error de voz", "Voice error"), _voiceDebugError),
         _detailRow("Backend", _backendInterpretation),
-        _detailRow("Código", _codeRoute),
-        _detailRow("Operador", _controller.operatorStatus),
-        _detailRow("Intención", _controller.detectedIntent),
-        _detailRow("Acción", _controller.technicalAction),
-        _detailRow("Seguridad", _controller.securityLevel),
+        _detailRow(_ui("Código", "Code"), _codeRoute),
+        _detailRow(_ui("Operador", "Operator"), _controller.operatorStatus),
+        _detailRow(_ui("Intención", "Intent"), _controller.detectedIntent),
+        _detailRow(_ui("Acción", "Action"), _controller.technicalAction),
+        _detailRow(_ui("Seguridad", "Security"), _controller.securityLevel),
       ],
+    ),
+  );
+
+  int get _primaryLatencyMs {
+    final metrics = VoiceLatencyMetrics.latest;
+    return metrics["total_ms"] ??
+        metrics["transcription_ms"] ??
+        metrics["backend_intent_ms"] ??
+        0;
+  }
+
+  String get _interactionLabel {
+    if (_controller.isListening) return "LISTENING";
+    if (VoiceEngine.paused.value) return "PAUSED";
+    if (VoiceEngine.speaking.value) return "RESPONDING";
+    if (_controller.detectedIntent == "voice_processing") return "PROCESSING";
+    return "READY";
+  }
+
+  Widget _panel({
+    required Widget child,
+    EdgeInsets padding = const EdgeInsets.all(18),
+  }) => Container(
+    padding: padding,
+    decoration: BoxDecoration(
+      color: const Color(0xFF08131D).withValues(alpha: 0.94),
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: const Color(0xFF18364B)),
+      boxShadow: const [
+        BoxShadow(
+          color: Color(0x44000000),
+          blurRadius: 20,
+          offset: Offset(0, 10),
+        ),
+      ],
+    ),
+    child: child,
+  );
+
+  Widget _sectionLabel(String text) => Text(
+    text,
+    style: const TextStyle(
+      color: Color(0xFF7894A8),
+      fontSize: 11,
+      fontWeight: FontWeight.w700,
+      letterSpacing: 1.5,
+    ),
+  );
+
+  Widget _statusPanel() => _panel(
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _sectionLabel(_ui("ESTADO DEL SISTEMA", "SYSTEM STATUS")),
+        const SizedBox(height: 14),
+        _statusRow(
+          Icons.memory_rounded,
+          _ui("Inteligencia local", "Local intelligence"),
+          _ui("Activa", "Running"),
+          const Color(0xFF4FE39B),
+        ),
+        _statusRow(
+          Icons.language_rounded,
+          _ui("Idioma", "Language"),
+          _controller.activeLanguageName,
+          const Color(0xFF29C8FF),
+        ),
+        _statusRow(
+          Icons.shield_outlined,
+          _ui("Seguridad", "Security"),
+          _controller.securityLevel,
+          const Color(0xFF4FE39B),
+        ),
+        _statusRow(
+          Icons.account_tree_outlined,
+          _ui("Intención", "Intent"),
+          _controller.detectedIntent,
+          const Color(0xFF29C8FF),
+        ),
+      ],
+    ),
+  );
+
+  Widget _statusRow(IconData icon, String label, String value, Color color) =>
+      Padding(
+        padding: const EdgeInsets.symmetric(vertical: 9),
+        child: Row(
+          children: [
+            Icon(icon, color: color, size: 18),
+            const SizedBox(width: 10),
+            Text(
+              label,
+              style: const TextStyle(color: Color(0xFF9BB0BE), fontSize: 12),
+            ),
+            const Spacer(),
+            Flexible(
+              child: Text(
+                value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.right,
+                style: TextStyle(color: color, fontSize: 11),
+              ),
+            ),
+          ],
+        ),
+      );
+
+  Widget _voiceStage(ThemeData theme, ColorScheme colors) => Column(
+    children: [
+      Text(
+        _ui("MOTOR DE VOZ", "VOICE RUNTIME"),
+        style: const TextStyle(
+          color: Color(0xFF6F899B),
+          fontSize: 11,
+          letterSpacing: 2.4,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      const SizedBox(height: 18),
+      AnimatedBuilder(
+        animation: _pulse,
+        builder: (context, child) => CustomPaint(
+          painter: _IOVWavePainter(
+            phase: _pulse.value,
+            active: _controller.isListening || VoiceEngine.speaking.value,
+            signal: _controller.isListening
+                ? _liveAmplitude
+                : VoiceEngine.speaking.value
+                ? 0.72
+                : 0.08,
+          ),
+          child: Center(child: _voiceCore(colors)),
+        ),
+      ),
+      const SizedBox(height: 22),
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
+        decoration: BoxDecoration(
+          color: const Color(0xFF0E2636),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: const Color(0xFF1D638A)),
+        ),
+        child: Text(
+          _interactionLabel,
+          style: const TextStyle(
+            color: Color(0xFF45D6FF),
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 1.4,
+          ),
+        ),
+      ),
+      const SizedBox(height: 18),
+      _heardText(theme),
+    ],
+  );
+
+  Widget _codePanel() => _panel(
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            _sectionLabel(_ui("CÓDIGO ACTIVO", "ACTIVE CODE")),
+            const Spacer(),
+            const Icon(Icons.circle, color: Color(0xFF4FE39B), size: 8),
+            const SizedBox(width: 6),
+            const Text(
+              "CONNECTED",
+              style: TextStyle(
+                color: Color(0xFF4FE39B),
+                fontSize: 9,
+                letterSpacing: 1,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 280),
+          child: _controller.hasActiveCodePreview
+              ? Column(
+                  key: ValueKey(_controller.activeCodePath),
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.description_outlined,
+                          color: Color(0xFF29C8FF),
+                          size: 16,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            _controller.activeCodePath,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Color(0xFFD7E7F1),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        Text(
+                          _controller.activeCodeLanguage.toUpperCase(),
+                          style: const TextStyle(
+                            color: Color(0xFF4FE39B),
+                            fontSize: 9,
+                            letterSpacing: 1.2,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Container(
+                      width: double.infinity,
+                      constraints: const BoxConstraints(maxHeight: 430),
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF050C12),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: const Color(0xFF142B3B)),
+                      ),
+                      child: SingleChildScrollView(
+                        child: SelectableText(
+                          _controller.activeCodePreview,
+                          style: const TextStyle(
+                            color: Color(0xFF9EDFFF),
+                            fontFamily: "monospace",
+                            fontSize: 11,
+                            height: 1.55,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                )
+              : Container(
+                  key: const ValueKey("code-waiting"),
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 34,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF061019),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Column(
+                    children: [
+                      const Icon(
+                        Icons.code_rounded,
+                        color: Color(0xFF24516D),
+                        size: 34,
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        _ui(
+                          "Pide explicar el archivo activo",
+                          "Ask to explain the active file",
+                        ),
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Color(0xFF6F899B),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _metricCard(IconData icon, String label, String value, Color color) =>
+      Expanded(
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 82),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            color: const Color(0xFF0A1823),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFF17364B)),
+          ),
+          child: Row(
+            children: [
+              Icon(icon, color: color, size: 26),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      label,
+                      style: const TextStyle(
+                        color: Color(0xFF748B9A),
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1.1,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      value,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: color,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+
+  Widget _bottomMetrics() => Row(
+    children: [
+      _metricCard(
+        Icons.mic_rounded,
+        _ui("MICRÓFONO", "MICROPHONE"),
+        _controller.isListening
+            ? _ui("Activo", "Active")
+            : _ui("Listo", "Ready"),
+        const Color(0xFF4FE39B),
+      ),
+      const SizedBox(width: 12),
+      _metricCard(
+        Icons.shield_outlined,
+        _ui("SEGURIDAD", "SECURITY"),
+        _controller.securityLevel,
+        const Color(0xFF4FE39B),
+      ),
+      const SizedBox(width: 12),
+      _metricCard(
+        Icons.speed_rounded,
+        _ui("LATENCIA", "LATENCY"),
+        _primaryLatencyMs == 0
+            ? _ui("Esperando datos", "Awaiting data")
+            : "$_primaryLatencyMs ms",
+        const Color(0xFF29C8FF),
+      ),
+      const SizedBox(width: 12),
+      _metricCard(
+        Icons.code_rounded,
+        "VS CODE",
+        _codeRoute == "Sin ruta de código."
+            ? _ui("En espera", "Standby")
+            : _ui("Conectado", "Connected"),
+        const Color(0xFF29C8FF),
+      ),
+    ],
+  );
+
+  Widget _voiceControls() => Row(
+    mainAxisAlignment: MainAxisAlignment.center,
+    children: [
+      _controlButton(
+        Icons.mic_rounded,
+        _controller.isListening
+            ? _ui("Detener captura", "Stop capture")
+            : _ui("Hablar", "Speak"),
+        () => _listen(manual: true),
+        primary: true,
+      ),
+      const SizedBox(width: 12),
+      _controlButton(
+        VoiceEngine.paused.value
+            ? Icons.play_arrow_rounded
+            : Icons.pause_rounded,
+        VoiceEngine.paused.value
+            ? _ui("Continuar", "Resume")
+            : _ui("Pausa", "Pause"),
+        () {
+          final event = VoiceEngine.paused.value
+              ? VoiceControlEvent.resume
+              : VoiceControlEvent.pause;
+          unawaited(_applyControlEvent(event, "UI control"));
+        },
+      ),
+      const SizedBox(width: 12),
+      _controlButton(
+        Icons.stop_rounded,
+        _ui("Detener", "Stop"),
+        () =>
+            unawaited(_applyControlEvent(VoiceControlEvent.stop, "UI control")),
+      ),
+    ],
+  );
+
+  Widget _controlButton(
+    IconData icon,
+    String label,
+    VoidCallback onPressed, {
+    bool primary = false,
+  }) => FilledButton.icon(
+    onPressed: onPressed,
+    icon: Icon(icon, size: 18),
+    label: Text(label),
+    style: FilledButton.styleFrom(
+      backgroundColor: primary
+          ? const Color(0xFF087DC1)
+          : const Color(0xFF102637),
+      foregroundColor: primary ? Colors.white : const Color(0xFF9EDFFF),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: Color(0xFF1C5574)),
+      ),
     ),
   );
 
@@ -887,94 +1472,167 @@ class _OSvozCommandCenterState extends State<OSvozCommandCenter>
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     return Scaffold(
+      backgroundColor: const Color(0xFF030A10),
       body: DecoratedBox(
         decoration: const BoxDecoration(
           gradient: RadialGradient(
-            center: Alignment(0, -0.55),
-            radius: 1.15,
-            colors: [Color(0xFF24233B), Color(0xFF0C0E16)],
+            center: Alignment(0, -0.2),
+            radius: 1.1,
+            colors: [Color(0xFF0B2535), Color(0xFF030A10)],
           ),
         ),
         child: SafeArea(
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 760),
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(28, 30, 28, 36),
-                child: Column(
-                  children: [
-                    Row(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final compact = constraints.maxWidth < 1050;
+              return SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(22, 18, 22, 26),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 1480),
+                    child: Column(
                       children: [
-                        Container(
-                          width: 10,
-                          height: 10,
-                          decoration: BoxDecoration(
-                            color: _statusColor(colors),
-                            shape: BoxShape.circle,
-                            boxShadow: [
-                              BoxShadow(
-                                color: _statusColor(
-                                  colors,
-                                ).withValues(alpha: 0.45),
-                                blurRadius: 12,
+                        Row(
+                          children: [
+                            Container(
+                              width: 9,
+                              height: 9,
+                              decoration: BoxDecoration(
+                                color: _statusColor(colors),
+                                shape: BoxShape.circle,
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: _statusColor(
+                                      colors,
+                                    ).withValues(alpha: 0.55),
+                                    blurRadius: 12,
+                                  ),
+                                ],
                               ),
+                            ),
+                            const SizedBox(width: 9),
+                            Text(
+                              _interactionLabel,
+                              style: const TextStyle(
+                                color: Color(0xFF8DA5B5),
+                                fontSize: 11,
+                                letterSpacing: 1.5,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const Spacer(),
+                            Text(
+                              _controller.activeLanguageName,
+                              style: const TextStyle(
+                                color: Color(0xFF607887),
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        if (compact) ...[
+                          _voiceStage(theme, colors),
+                          const SizedBox(height: 18),
+                          _responseCard(theme),
+                          const SizedBox(height: 18),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(child: _statusPanel()),
+                              const SizedBox(width: 14),
+                              Expanded(child: _codePanel()),
                             ],
                           ),
-                        ),
-                        const SizedBox(width: 10),
-                        Text(
-                          _controller.isListening
-                              ? "ESCUCHANDO"
-                              : VoiceEngine.speaking.value
-                              ? "RESPONDIENDO"
-                              : _continuousListening
-                              ? "REARMANDO ESCUCHA"
-                              : "TOCA PARA ACTIVAR",
-                          style: theme.textTheme.labelMedium?.copyWith(
-                            color: Colors.white60,
-                            letterSpacing: 1.5,
-                            fontWeight: FontWeight.w600,
+                        ] else
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              SizedBox(width: 235, child: _statusPanel()),
+                              const SizedBox(width: 24),
+                              Expanded(
+                                flex: 4,
+                                child: Column(
+                                  children: [
+                                    _voiceStage(theme, colors),
+                                    const SizedBox(height: 18),
+                                    _responseCard(theme),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 24),
+                              SizedBox(width: 430, child: _codePanel()),
+                            ],
                           ),
-                        ),
-                        const Spacer(),
-                        Text(
-                          _controller.activeLanguageName,
-                          style: theme.textTheme.labelMedium?.copyWith(
-                            color: Colors.white38,
-                          ),
-                        ),
+                        const SizedBox(height: 18),
+                        _voiceControls(),
+                        const SizedBox(height: 16),
+                        if (!compact) _bottomMetrics(),
+                        const SizedBox(height: 8),
+                        _details(theme),
                       ],
                     ),
-                    const SizedBox(height: 34),
-                    _responseCard(theme),
-                    const SizedBox(height: 34),
-                    _heardText(theme),
-                    const SizedBox(height: 34),
-                    _voiceCore(colors),
-                    const SizedBox(height: 18),
-                    Text(
-                      VoiceEngine.speaking.value
-                          ? "La escucha volverá al terminar"
-                          : !_continuousListening
-                          ? _controller.isListening
-                                ? "Habla normal. Procesaré al detectar silencio."
-                                : "Toca para activar el micrófono. No necesitas decir “OSvoz”."
-                          : _wakeWordGate.conversationActive
-                          ? "Conversación activa"
-                          : "Di “OSvoz” para comenzar",
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: Colors.white38,
-                      ),
-                    ),
-                    const SizedBox(height: 34),
-                    _details(theme),
-                  ],
+                  ),
                 ),
-              ),
-            ),
+              );
+            },
           ),
         ),
       ),
     );
   }
+}
+
+class _IOVWavePainter extends CustomPainter {
+  const _IOVWavePainter({
+    required this.phase,
+    required this.active,
+    required this.signal,
+  });
+
+  final double phase;
+  final bool active;
+  final double signal;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final glow = Paint()
+      ..color = Color.fromRGBO(21, 190, 255, active ? 0.18 : 0.08)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 24);
+    canvas.drawCircle(center, 105, glow);
+
+    for (var line = 0; line < 3; line++) {
+      final path = Path();
+      final paint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = line == 0 ? 2 : 1
+        ..color = Color.fromRGBO(
+          37,
+          205,
+          255,
+          active ? 0.72 - line * 0.16 : 0.24,
+        );
+      for (double x = 0; x <= size.width; x += 4) {
+        final distance = (x - center.dx).abs() / center.dx;
+        final envelope = (1 - distance).clamp(0.0, 1.0);
+        final baseAmplitude = 7 + (signal.clamp(0.0, 1.0) * 44);
+        final amplitude = baseAmplitude * envelope * (1 - line * 0.2);
+        final y =
+            center.dy + math.sin((x * 0.045) + (phase * 8) + line) * amplitude;
+        if (x == 0) {
+          path.moveTo(x, y);
+        } else {
+          path.lineTo(x, y);
+        }
+      }
+      canvas.drawPath(path, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _IOVWavePainter oldDelegate) =>
+      oldDelegate.phase != phase ||
+      oldDelegate.active != active ||
+      oldDelegate.signal != signal;
 }

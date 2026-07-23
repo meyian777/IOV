@@ -13,6 +13,7 @@ import '../services/language_manager.dart';
 import '../services/operator_capability_service.dart';
 import '../services/operator_status_service.dart';
 import '../services/project_memory.dart';
+import '../services/semantic_code_narrator.dart';
 import '../services/session_memory.dart';
 import '../services/voice_engine.dart';
 import '../services/voice_latency_metrics.dart';
@@ -39,6 +40,12 @@ class OSvozController extends ChangeNotifier {
   String technicalAction = "Sin acciones pendientes";
   String securityLevel = "Seguro";
   String operatorStatus = "Operador listo";
+  String activeCodePath = "";
+  String activeCodeLanguage = "";
+  String activeCodePreview = "";
+
+  bool get hasActiveCodePreview =>
+      activeCodePath.isNotEmpty && activeCodePreview.isNotEmpty;
 
   String? _pendingConfirmationToken;
   String? _pendingActionName;
@@ -47,6 +54,7 @@ class OSvozController extends ChangeNotifier {
   int _progressGeneration = 0;
   int _presenceTurn = 0;
   DateTime? _commandStartedAt;
+  final SemanticCodeNarrator _semanticNarrator = SemanticCodeNarrator();
 
   String get activeLanguageName {
     if (selectedLanguageCode != "auto") return selectedLanguageName;
@@ -174,14 +182,31 @@ class OSvozController extends ChangeNotifier {
   void processingCapturedVoice() {
     final feedbackStopwatch = Stopwatch()..start();
     isListening = false;
-    response = LanguageManager.text("Ya te escuché.", "I heard you.");
+    response = LanguageManager.text(
+      "Procesando tu voz...",
+      "Processing your voice...",
+    );
     detectedIntent = "voice_processing";
     technicalAction = "Audio captured; transcription is running.";
     securityLevel = "Secure";
     notifyListeners();
     feedbackStopwatch.stop();
     VoiceLatencyMetrics.record("feedback_ms", feedbackStopwatch.elapsed);
-    unawaited(_speakResponse(response));
+    // Do not synthesize speech here. Speaking while Whisper is transcribing marks
+    // the user's captured command as app echo and prevents interpretation.
+  }
+
+  void narrationControlFeedback({
+    required String heard,
+    required String message,
+    required String control,
+  }) {
+    heardCommand = heard;
+    response = message;
+    detectedIntent = "narration_control_$control";
+    technicalAction = "Local narration control event: $control.";
+    securityLevel = "Local control";
+    notifyListeners();
   }
 
   Future<void> microphoneUnavailable() async {
@@ -297,6 +322,15 @@ class OSvozController extends ChangeNotifier {
         return;
       case "read_project_file":
         await _readProjectFile(rawCommand);
+        return;
+      case "explain_active_file":
+        await _explainActiveFile(rawCommand);
+        return;
+      case "continue_semantic_narration":
+        await _continueSemanticNarration(rawCommand);
+        return;
+      case "summarize_semantic_narration":
+        await _summarizeSemanticNarration(rawCommand);
         return;
       case "run_diagnostics":
         await _runDiagnostics(rawCommand);
@@ -591,6 +625,72 @@ class OSvozController extends ChangeNotifier {
         security: "Blocked",
       );
     }
+  }
+
+  Future<void> _explainActiveFile(String rawCommand) async {
+    try {
+      final result = await OSvozApi.getEditorContext();
+      final context = result["context"] as Map<String, dynamic>?;
+      final connected = context?["connected"] == true;
+      final source = context?["document_text"]?.toString() ?? "";
+      final path =
+          context?["relative_file"]?.toString() ??
+          context?["active_file"]?.toString() ??
+          "archivo activo";
+      final language = context?["language_id"]?.toString() ?? "código";
+      if (!connected || source.trim().isEmpty) {
+        throw const OSvozApiException(
+          "VS Code no compartió un archivo activo con contenido.",
+          code: "editor_context_unavailable",
+        );
+      }
+      final tree = SemanticCodeAnalyzer.analyze(
+        path: path,
+        language: language,
+        source: source,
+      );
+      activeCodePath = path;
+      activeCodeLanguage = language;
+      activeCodePreview = source.split(RegExp(r'\r?\n')).take(42).join('\n');
+      await _update(
+        heard: rawCommand,
+        response: _semanticNarrator.start(tree),
+        intent: "semantic_narration",
+        action:
+            "Semantic tree created with ${tree.nodes.length} critical nodes; cursor=${_semanticNarrator.cursor}.",
+        security: "Read only",
+      );
+    } on OSvozApiException catch (error) {
+      await _update(
+        heard: rawCommand,
+        response: _friendlyApiError(error),
+        intent: "semantic_narration_failed",
+        action: error.code ?? "semantic_narration_failed",
+        security: "Blocked",
+      );
+    }
+  }
+
+  Future<void> _continueSemanticNarration(String rawCommand) async {
+    await _update(
+      heard: rawCommand,
+      response: _semanticNarrator.next(),
+      intent: "semantic_narration_continue",
+      action:
+          "Semantic narration continued at cursor=${_semanticNarrator.cursor}.",
+      security: "Read only",
+    );
+  }
+
+  Future<void> _summarizeSemanticNarration(String rawCommand) async {
+    await _update(
+      heard: rawCommand,
+      response: _semanticNarrator.summary(),
+      intent: "semantic_narration_summary",
+      action:
+          "Semantic narration summarized at cursor=${_semanticNarrator.cursor}.",
+      security: "Read only",
+    );
   }
 
   String _compactFilePreview(String content) {

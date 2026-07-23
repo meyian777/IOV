@@ -120,12 +120,15 @@ void main() {
 
     expect(find.byKey(const Key('voice-core')), findsOneWidget);
     expect(authenticator.sessionStartCalls, 1);
-    expect(authenticator.voiceLocales, ['es_ES']);
+    expect(authenticator.biometricCalls, 1);
+    expect(authenticator.voiceCalls, 0);
+    expect(find.text('Voz'), findsNothing);
+    expect(find.text('Confirmación'), findsNothing);
     expect(find.byType(TextField), findsNothing);
     expect(find.byType(ActionChip), findsNothing);
   });
 
-  testWidgets('OSvoz bloquea voz no confirmada y permite reintento', (
+  testWidgets('OSvoz no exige confirmación de voz después de la biometría', (
     WidgetTester tester,
   ) async {
     final authenticator = FakeSessionAuthenticator(
@@ -134,13 +137,7 @@ void main() {
           verified: false,
           transcript: 'hola sistema',
           language: 'es',
-          message: 'Di: OSvoz, soy Ian y autorizo esta sesión.',
-        ),
-        VoiceSessionResult(
-          verified: true,
-          transcript: 'OSvoz soy Ian y autorizo esta sesión',
-          language: 'es',
-          message: 'Voz verificada.',
+          message: 'Esta confirmación no debe ejecutarse.',
         ),
       ],
     );
@@ -154,55 +151,14 @@ void main() {
       ),
     );
     await tester.pump();
-    await tester.pump(const Duration(seconds: 2));
-
-    expect(find.text('Voz no confirmada'), findsOneWidget);
-    expect(find.text('Reintentar voz'), findsOneWidget);
-    expect(find.text('hola sistema'), findsOneWidget);
-
-    await tester.tap(find.text('Reintentar voz'));
-    await tester.pump(const Duration(seconds: 2));
+    await tester.pump(const Duration(seconds: 1));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('voice-core')), findsOneWidget);
-    expect(authenticator.voiceCalls, 2);
-    expect(authenticator.voiceLocales, ['es_ES', 'es_ES']);
-  });
-
-  testWidgets('OSvoz permite cambiar idioma si la voz queda bloqueada', (
-    WidgetTester tester,
-  ) async {
-    final authenticator = FakeSessionAuthenticator(
-      voiceResults: const [
-        VoiceSessionResult(
-          verified: false,
-          transcript: 'authorize this session',
-          language: 'en',
-          message: 'Say: OSvoz, I authorize this session.',
-        ),
-      ],
-    );
-
-    await tester.pumpWidget(
-      OSvozApp(
-        authenticator: authenticator,
-        deviceTrustService: FakeDeviceTrustService(),
-        localSessionTrustStore: MemorySessionTrustStore(),
-        showEnterpriseGate: false,
-      ),
-    );
-    await tester.pump();
-    await tester.pump(const Duration(seconds: 2));
-
-    expect(find.text('Voz no confirmada'), findsOneWidget);
-    expect(find.text('Cambiar idioma'), findsOneWidget);
-
-    await tester.tap(find.byKey(const Key('change-session-language')));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Elige tu idioma'), findsOneWidget);
-    expect(find.text('Español'), findsOneWidget);
-    expect(find.text('English'), findsOneWidget);
+    expect(authenticator.biometricCalls, 1);
+    expect(authenticator.voiceCalls, 0);
+    expect(find.text('Voz no confirmada'), findsNothing);
+    expect(find.text('Reintentar voz'), findsNothing);
   });
 
   testWidgets('OSvoz mantiene el gate si la identidad local falla', (
@@ -226,7 +182,7 @@ void main() {
     expect(find.byKey(const Key('voice-core')), findsNothing);
   });
 
-  testWidgets('OSvoz actualiza idioma si la confirmación cambia a inglés', (
+  testWidgets('OSvoz conserva el idioma detectado al autenticar en inglés', (
     WidgetTester tester,
   ) async {
     final authenticator = FakeSessionAuthenticator(
@@ -256,22 +212,14 @@ void main() {
       ),
     );
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 1200));
-
-    expect(find.text('Sesión activa'), findsOneWidget);
-    expect(
-      find.text('Identity confirmed in English. Opening IOV.'),
-      findsOneWidget,
-    );
-
     await tester.pump(const Duration(seconds: 1));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('voice-core')), findsOneWidget);
-    expect(authenticator.voiceLocales, ['en_US']);
+    expect(authenticator.voiceCalls, 0);
   });
 
-  testWidgets('OSvoz guarda confianza local al completar Face ID y voz', (
+  testWidgets('OSvoz guarda confianza local al completar la biometría', (
     WidgetTester tester,
   ) async {
     final trustStore = MemorySessionTrustStore();
